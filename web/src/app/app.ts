@@ -1,5 +1,6 @@
-import { ChangeDetectionStrategy, Component } from '@angular/core';
+import { ChangeDetectionStrategy, Component, inject } from '@angular/core';
 import { RouterOutlet } from '@angular/router';
+import { SettingsService } from './settings.service';
 
 @Component({
   selector: 'app-root',
@@ -8,4 +9,7 @@ import { RouterOutlet } from '@angular/router';
   template: '<router-outlet />',
   styles: ':host { display: block; height: 100dvh; }',
 })
-export class App {}
+export class App {
+  // Created up front so the saved theme and language apply on every route.
+  private readonly settings = inject(SettingsService);
+}

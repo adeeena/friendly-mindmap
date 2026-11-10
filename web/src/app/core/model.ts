@@ -3,21 +3,74 @@ export type Shape = 'none' | 'rectangle' | 'rounded';
 export type LayoutDirection = 'horizontal' | 'vertical' | 'balanced';
 export type NodeKind = 'topic' | 'checklist';
 
-export const COLOR_KEYS = [
-  'slate',
-  'red',
-  'orange',
-  'amber',
-  'green',
-  'teal',
-  'blue',
-  'indigo',
-  'purple',
-  'pink',
+/** Bright colors, shown first in every color picker (4 per row). */
+export const PALETTE_VIVID = [
+  'violet',
+  'orchid',
+  'fuchsia',
+  'rose',
+  'vermilion',
+  'tangerine',
+  'sunflower',
+  'lime',
+  'grass',
+  'mint',
+  'cyan',
+  'cobalt',
 ] as const;
+
+/** Pastel, deep and neutral colors shown below the bright ones. */
+export const PALETTE_MORE = [
+  'cream',
+  'peach',
+  'blush',
+  'sage',
+  'sky',
+  'lavender',
+  'gold',
+  'apricot',
+  'coral',
+  'emerald',
+  'azure',
+  'periwinkle',
+  'ochre',
+  'brown',
+  'crimson',
+  'forest',
+  'navy',
+  'grape',
+  'white',
+  'silver',
+  'gray',
+  'charcoal',
+  'black',
+  'steel',
+  'mauve',
+] as const;
+
+export const PALETTE_KEYS = [...PALETTE_VIVID, ...PALETTE_MORE] as const;
+
+/** Keys from the first palette; still valid in stored boards but no longer offered. */
+const LEGACY_COLOR_KEYS = ['slate', 'red', 'orange', 'amber', 'green', 'teal', 'blue', 'indigo', 'purple', 'pink'] as const;
+
+/** Every stored color value. */
+export const COLOR_KEYS = [...PALETTE_KEYS, ...LEGACY_COLOR_KEYS] as const;
 export type ColorKey = (typeof COLOR_KEYS)[number];
+export type PaletteKey = (typeof PALETTE_KEYS)[number];
 
 export const SHAPES: readonly Shape[] = ['none', 'rectangle', 'rounded'];
+
+export const EDGE_PATTERNS = ['solid', 'dashed', 'dotted'] as const;
+export type EdgePattern = (typeof EDGE_PATTERNS)[number];
+export const EDGE_WIDTHS = [1, 2, 3, 4, 6] as const;
+export const DEFAULT_EDGE_WIDTH = 2;
+
+/** Per-edge appearance; absent fields fall back to the shared default. */
+export interface EdgeStyle {
+  pattern?: EdgePattern;
+  color?: ColorKey;
+  width?: number;
+}
 
 /** ProseMirror/TipTap JSON node. */
 export interface RichNode {
@@ -52,6 +105,10 @@ export interface MindNode {
   /** Top-left world position used for roots and in free (non auto-align) mode. */
   x: number;
   y: number;
+  /** Manual world offset applied on top of the auto-layout slot. */
+  layoutOffset?: { x: number; y: number };
+  /** Appearance of the incoming hierarchy edge. */
+  edgeStyle?: EdgeStyle;
   text: RichDoc;
   shape?: Shape;
   color?: ColorKey;
@@ -73,6 +130,7 @@ export interface CrossLink {
   id: string;
   from: NodeId;
   to: NodeId;
+  edgeStyle?: EdgeStyle;
 }
 
 export interface TagDef {
@@ -107,7 +165,7 @@ export interface Camera {
   zoom: number;
 }
 
-export const SCHEMA_VERSION = 1;
+export const SCHEMA_VERSION = 2;
 
 export interface StoredBoard {
   schemaVersion: number;

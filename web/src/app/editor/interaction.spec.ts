@@ -120,6 +120,60 @@ describe('InteractionController', () => {
     expect(childrenOf(store.doc(), a)).toEqual([b2]);
   });
 
+  it('auto align drag to empty canvas keeps the parent link and stores a manual offset', () => {
+    const a = store.createRootAt({ x: 0, y: 0 }, { edit: false });
+    const b = store.addChild(a, false)!;
+    const before = store.rects().get(b)!;
+    ctl.pointerDown(ev({ x: before.x + 5, y: before.y + 5, nodeId: b }));
+    ctl.pointerMove(ev({ x: before.x + 405, y: before.y + 205 }));
+    expect(store.dropTarget()).toEqual({ parentId: null, offset: { x: 400, y: 200 } });
+    ctl.pointerUp(ev({ x: before.x + 405, y: before.y + 205 }));
+    expect(store.doc().nodes[b].parentId).toBe(a);
+    expect(childrenOf(store.doc(), a)).toEqual([b]);
+    expect(store.doc().nodes[b].layoutOffset).toEqual({ x: 400, y: 200 });
+    expect(store.rects().get(b)).toMatchObject({ x: before.x + 400, y: before.y + 200 });
+    expect(store.visibleIds()).toContain(b);
+    store.undo();
+    expect(store.doc().nodes[b].layoutOffset).toBeUndefined();
+    expect(store.rects().get(b)).toMatchObject({ x: before.x, y: before.y });
+  });
+
+  it('offset persists across relayout and is cleared by reset', () => {
+    const a = store.createRootAt({ x: 0, y: 0 }, { edit: false });
+    const b = store.addChild(a, false)!;
+    const before = store.rects().get(b)!;
+    store.offsetNode(b, { x: 80, y: 40 });
+    store.addChild(a, false);
+    expect(store.doc().nodes[b].layoutOffset).toEqual({ x: 80, y: 40 });
+    expect(store.rects().get(b)!.x).toBe(before.x + 80);
+    store.resetLayoutOffset([b]);
+    expect(store.doc().nodes[b].layoutOffset).toBeUndefined();
+    expect(store.rects().get(b)!.x).toBe(before.x);
+  });
+
+  it('root promotion stays explicit and clears the offset', () => {
+    const a = store.createRootAt({ x: 0, y: 0 }, { edit: false });
+    const b = store.addChild(a, false)!;
+    const c = store.addChild(a, false)!;
+    store.offsetNode(b, { x: 80, y: 40 });
+    store.promote(b);
+    expect(store.doc().nodes[b].parentId).toBeNull();
+    expect(store.doc().nodes[b].layoutOffset).toBeUndefined();
+    store.selectEdge({ type: 'hierarchy', childId: c });
+    store.deleteSelection();
+    expect(store.doc().nodes[c].parentId).toBeNull();
+  });
+
+  it('turning Auto align off bakes offsets into positions and clears them', () => {
+    const a = store.createRootAt({ x: 0, y: 0 }, { edit: false });
+    const b = store.addChild(a, false)!;
+    store.offsetNode(b, { x: 80, y: 40 });
+    const at = store.rects().get(b)!;
+    store.updateSettings({ autoAlign: false });
+    expect(store.doc().nodes[b].layoutOffset).toBeUndefined();
+    expect(store.doc().nodes[b]).toMatchObject({ x: at.x, y: at.y });
+  });
+
   it('escape cancels a structural drag', () => {
     const a = store.createRootAt({ x: 0, y: 0 }, { edit: false });
     const b = store.addChild(a, false)!;

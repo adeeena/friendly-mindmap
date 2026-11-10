@@ -94,21 +94,16 @@ const NORMAL: Record<Side, Point> = {
 const f = (n: number) => Math.round(n * 10) / 10;
 
 export interface EdgeGeometry {
-  /** filled (tapered) or stroked path */
+  /** stroked centerline */
   d: string;
-  /** centerline used for hit testing and arrowheads */
+  /** path used for hit testing */
   center: string;
   start: Point;
   end: Point;
 }
 
-/** Tapered S-curve from parent to child along the layout axis. */
-export function hierarchyEdge(
-  parent: Rect,
-  child: Rect,
-  direction: LayoutDirection,
-  widths: { start: number; end: number } = { start: 4, end: 1.5 },
-): EdgeGeometry {
+/** S-curve from parent to child along the layout axis. */
+export function hierarchyEdge(parent: Rect, child: Rect, direction: LayoutDirection): EdgeGeometry {
   const pc = center(parent);
   const cc = center(child);
   let ps: Side;
@@ -131,23 +126,8 @@ export function hierarchyEdge(
   const n3 = NORMAL[cs];
   const p1 = { x: p0.x + n0.x * k, y: p0.y + n0.y * k };
   const p2 = { x: p3.x + n3.x * k, y: p3.y + n3.y * k };
-  // Offsets perpendicular to the layout axis give the taper.
-  const off = (p: Point, w: number) => (horizontal ? { x: p.x, y: p.y + w / 2 } : { x: p.x + w / 2, y: p.y });
-  const ws = widths.start;
-  const we = widths.end;
-  const a0 = off(p0, ws);
-  const a1 = off(p1, ws * 0.7 + we * 0.3);
-  const a2 = off(p2, ws * 0.3 + we * 0.7);
-  const a3 = off(p3, we);
-  const b0 = off(p0, -ws);
-  const b1 = off(p1, -(ws * 0.7 + we * 0.3));
-  const b2 = off(p2, -(ws * 0.3 + we * 0.7));
-  const b3 = off(p3, -we);
-  const d =
-    `M${f(a0.x)},${f(a0.y)} C${f(a1.x)},${f(a1.y)} ${f(a2.x)},${f(a2.y)} ${f(a3.x)},${f(a3.y)} ` +
-    `L${f(b3.x)},${f(b3.y)} C${f(b2.x)},${f(b2.y)} ${f(b1.x)},${f(b1.y)} ${f(b0.x)},${f(b0.y)} Z`;
-  const centerPath = `M${f(p0.x)},${f(p0.y)} C${f(p1.x)},${f(p1.y)} ${f(p2.x)},${f(p2.y)} ${f(p3.x)},${f(p3.y)}`;
-  return { d, center: centerPath, start: p0, end: p3 };
+  const d = `M${f(p0.x)},${f(p0.y)} C${f(p1.x)},${f(p1.y)} ${f(p2.x)},${f(p2.y)} ${f(p3.x)},${f(p3.y)}`;
+  return { d, center: d, start: p0, end: p3 };
 }
 
 /** Curved cross-link between the facing sides of two nodes. */

@@ -1,5 +1,6 @@
 import AxeBuilder from '@axe-core/playwright';
-import { expect, test } from '@playwright/test';
+import { Page, expect, test } from '@playwright/test';
+import { readFileSync } from 'node:fs';
 import { MOD, addRoot, buildTree, node, openApp } from './helpers';
 
 test.beforeEach(async ({ page }) => openApp(page));
@@ -111,6 +112,100 @@ test('todo children show checkboxes and progress', async ({ page }) => {
   await page.getByRole('toolbar', { name: 'Selection' }).getByRole('button', { name: 'Todo list for children' }).click();
   await page.getByRole('checkbox', { name: 'Done: B' }).check();
   await expect(page.getByRole('treeitem', { name: /^Root/ })).toContainText('1/2');
+});
+
+interface PngStats {
+  width: number;
+  height: number;
+  cornerAlpha: number;
+  /** pixels that are not backdrop: opaque-and-different from the corner colour, or any alpha when the corner is transparent */
+  content: number;
+  /** content pixels in the probed image column */
+  columnContent: number;
+}
+
+/** Exports the board as PNG through the dialog and decodes the downloaded file in the browser. */
+async function exportPng(
+  page: Page,
+  opts: { background: boolean; selectionOnly?: boolean; probeX?: number },
+): Promise<PngStats> {
+  await page.getByRole('button', { name: 'Export', exact: true }).click();
+  const dialog = page.getByRole('dialog', { name: /Save/ });
+  await dialog.getByRole('tab', { name: 'Image' }).click();
+  await dialog.getByRole('radio', { name: '1x' }).check();
+  const bg = dialog.getByLabel('Background');
+  if ((await bg.isChecked()) !== opts.background) await bg.setChecked(opts.background);
+  if (opts.selectionOnly) await dialog.getByRole('radio', { name: 'Selection' }).check();
+  const download = page.waitForEvent('download');
+  await dialog.getByRole('button', { name: 'Export image' }).click();
+  const file = await (await download).path();
+  const b64 = readFileSync(file).toString('base64');
+  await page.keyboard.press('Escape');
+  return page.evaluate(
+    async ({ data, probeX }) => {
+      const bytes = Uint8Array.from(atob(data), (c) => c.charCodeAt(0));
+      const bmp = await createImageBitmap(new Blob([bytes], { type: 'image/png' }));
+      const canvas = new OffscreenCanvas(bmp.width, bmp.height);
+      const ctx = canvas.getContext('2d')!;
+      ctx.drawImage(bmp, 0, 0);
+      const px = ctx.getImageData(0, 0, bmp.width, bmp.height).data;
+      const at = (i: number) => [px[i], px[i + 1], px[i + 2], px[i + 3]];
+      const corner = at(0);
+      const isContent = (i: number) => {
+        const [r, g, b, a] = at(i);
+        if (corner[3] === 0) return a > 0;
+        return a > 0 && (Math.abs(r - corner[0]) > 12 || Math.abs(g - corner[1]) > 12 || Math.abs(b - corner[2]) > 12);
+      };
+      let content = 0;
+      let columnContent = 0;
+      for (let y = 0; y < bmp.height; y++) {
+        for (let x = 0; x < bmp.width; x++) {
+          if (!isContent((y * bmp.width + x) * 4)) continue;
+          content++;
+          if (x === probeX) columnContent++;
+        }
+      }
+      return { width: bmp.width, height: bmp.height, cornerAlpha: corner[3], content, columnContent };
+    },
+    { data: b64, probeX: opts.probeX ?? -1 },
+  );
+}
+
+/** Image column (1x export, 32 px padding) at the centre of the gap between Root and A, where only the edge lies. */
+async function edgeColumn(page: Page): Promise<number> {
+  const root = (await node(page, 'Root').boundingBox())!;
+  const a = (await node(page, 'A').boundingBox())!;
+  const all = await Promise.all(['Root', 'A', 'A1', 'B'].map(async (l) => (await node(page, l).boundingBox())!));
+  const left = Math.min(...all.map((r) => r.x));
+  return Math.round(32 + ((root.x + root.width + a.x) / 2 - left));
+}
+
+test.describe('PNG export pixels', () => {
+  test('with background: opaque canvas, nodes and the edge between them are drawn', async ({ page }) => {
+    await buildTree(page);
+    const stats = await exportPng(page, { background: true, probeX: await edgeColumn(page) });
+    expect(stats.cornerAlpha).toBe(255);
+    expect(stats.content).toBeGreaterThan(500);
+    expect(stats.columnContent).toBeGreaterThan(0);
+  });
+
+  test('without background: transparent around the map, nodes and edges still visible', async ({ page }) => {
+    await buildTree(page);
+    const stats = await exportPng(page, { background: false, probeX: await edgeColumn(page) });
+    expect(stats.cornerAlpha).toBe(0);
+    expect(stats.content).toBeGreaterThan(500);
+    expect(stats.columnContent).toBeGreaterThan(0);
+  });
+
+  test('selection export contains only the selected nodes', async ({ page }) => {
+    await buildTree(page);
+    const whole = await exportPng(page, { background: false });
+    await node(page, 'A').click();
+    const part = await exportPng(page, { background: false, selectionOnly: true });
+    expect(part.content).toBeGreaterThan(100);
+    expect(part.content).toBeLessThan(whole.content);
+    expect(part.width * part.height).toBeLessThan(whole.width * whole.height);
+  });
 });
 
 test('PNG image export downloads a file', async ({ page }) => {

@@ -65,20 +65,22 @@ export async function toNativeZip(
 }
 
 function parseNativeObject(raw: unknown): StoredBoard {
-  if (!raw || typeof raw !== 'object') throw new BoardValidationError('Not a board file');
+  if (!raw || typeof raw !== 'object') throw new BoardValidationError('Not a board file', 'error.notBoard');
   const f = raw as Record<string, unknown>;
-  if (f['format'] !== NATIVE_FORMAT) throw new BoardValidationError('Not a Better Mindmap file');
+  if (f['format'] !== NATIVE_FORMAT) throw new BoardValidationError('Not a Better Mindmap file', 'error.notAppFile');
   const board = f['board'] as Record<string, unknown> | undefined;
   try {
     return migrateBoard({ schemaVersion: f['schemaVersion'], doc: board?.['doc'], camera: board?.['camera'] });
   } catch (e) {
-    if (e instanceof NewerSchemaError) throw new BoardValidationError('This file was made by a newer version of the app.');
+    if (e instanceof NewerSchemaError) {
+      throw new BoardValidationError('This file was made by a newer version of the app.', 'error.newerVersion');
+    }
     throw e;
   }
 }
 
 export async function importBoardFile(file: Blob & { name?: string }): Promise<ImportedBoard> {
-  if (file.size > MAX_IMPORT_BYTES) throw new BoardValidationError('File is larger than 50 MB.');
+  if (file.size > MAX_IMPORT_BYTES) throw new BoardValidationError('File is larger than 50 MB.', 'error.fileTooLarge');
   const bytes = new Uint8Array(await file.arrayBuffer());
   const isZip = bytes[0] === 0x50 && bytes[1] === 0x4b;
   if (!isZip) {
@@ -86,7 +88,7 @@ export async function importBoardFile(file: Blob & { name?: string }): Promise<I
     try {
       raw = JSON.parse(strFromU8(bytes));
     } catch {
-      throw new BoardValidationError('File is not valid JSON.');
+      throw new BoardValidationError('File is not valid JSON.', 'error.invalidJson');
     }
     return { board: parseNativeObject(raw), files: [] };
   }
@@ -96,21 +98,21 @@ export async function importBoardFile(file: Blob & { name?: string }): Promise<I
     entries = unzipSync(bytes, {
       filter: (f) => {
         total += f.originalSize;
-        if (total > MAX_IMPORT_BYTES) throw new BoardValidationError('Archive expands beyond 50 MB.');
+        if (total > MAX_IMPORT_BYTES) throw new BoardValidationError('Archive expands beyond 50 MB.', 'error.archiveTooLarge');
         return f.name === 'board.json' || f.name.startsWith('attachments/');
       },
     });
   } catch (e) {
     if (e instanceof BoardValidationError) throw e;
-    throw new BoardValidationError('Archive is corrupt.');
+    throw new BoardValidationError('Archive is corrupt.', 'error.archiveCorrupt');
   }
   const json = entries['board.json'];
-  if (!json) throw new BoardValidationError('Archive has no board.json.');
+  if (!json) throw new BoardValidationError('Archive has no board.json.', 'error.noBoardJson');
   let raw: unknown;
   try {
     raw = JSON.parse(strFromU8(json));
   } catch {
-    throw new BoardValidationError('board.json is not valid JSON.');
+    throw new BoardValidationError('board.json is not valid JSON.', 'error.boardJsonInvalid');
   }
   const board = parseNativeObject(raw);
   const metas = (raw as NativeFile).attachments ?? [];

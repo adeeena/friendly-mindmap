@@ -1,6 +1,7 @@
 import { ChangeDetectionStrategy, Component, computed, inject, signal } from '@angular/core';
 import { DialogRef } from '@angular/cdk/dialog';
-import { Command, CommandRegistry, formatKeys } from '../editor/commands';
+import { Command, CommandRegistry, commandGroup, commandLabel, formatKeys } from '../editor/commands';
+import { t } from '../i18n';
 
 /** Subsequence match score; lower is better, -1 = no match. */
 export function fuzzyScore(query: string, text: string): number {
@@ -25,7 +26,7 @@ export function fuzzyScore(query: string, text: string): number {
   changeDetection: ChangeDetectionStrategy.OnPush,
   host: { class: 'bm-palette bm-panel' },
   template: `
-    <h2 class="visually-hidden" id="bm-palette-title">Command palette</h2>
+    <h2 class="visually-hidden" id="bm-palette-title">{{ t('palette.title') }}</h2>
     <input
       class="bm-palette-input"
       type="text"
@@ -34,14 +35,14 @@ export function fuzzyScore(query: string, text: string): number {
       aria-controls="bm-palette-list"
       aria-expanded="true"
       aria-autocomplete="list"
-      placeholder="Type a command…"
+      [attr.placeholder]="t('palette.placeholder')"
       cdkFocusInitial
       [attr.aria-activedescendant]="results().length ? 'bm-cmd-' + active() : null"
       [value]="query()"
       (input)="onInput($event)"
       (keydown)="onKey($event)"
     />
-    <ul id="bm-palette-list" role="listbox" aria-label="Commands" class="bm-palette-list">
+    <ul id="bm-palette-list" role="listbox" [attr.aria-label]="t('palette.list')" class="bm-palette-list">
       @for (c of results(); track c.id; let i = $index) {
         <li
           role="option"
@@ -51,19 +52,22 @@ export function fuzzyScore(query: string, text: string): number {
           (pointerenter)="active.set(i)"
           (click)="run(c)"
         >
-          <span class="bm-cmd-group">{{ c.group }}</span>
-          <span class="bm-cmd-label">{{ c.label }}</span>
+          <span class="bm-cmd-group">{{ group(c) }}</span>
+          <span class="bm-cmd-label">{{ label(c) }}</span>
           @if (c.keys?.length) {
             <kbd>{{ fmt(c.keys![0]) }}</kbd>
           }
         </li>
       } @empty {
-        <li class="bm-palette-empty" role="option" aria-disabled="true" aria-selected="false">No matching commands</li>
+        <li class="bm-palette-empty" role="option" aria-disabled="true" aria-selected="false">{{ t('palette.empty') }}</li>
       }
     </ul>
   `,
 })
 export class CommandPalette {
+  protected readonly t = t;
+  protected readonly label = commandLabel;
+  protected readonly group = commandGroup;
   private readonly registry = inject(CommandRegistry);
   private readonly ref = inject(DialogRef);
   protected readonly query = signal('');
@@ -74,7 +78,7 @@ export class CommandPalette {
     return this.registry
       .commands()
       .filter((c) => !c.hidden && (!c.enabled || c.enabled()))
-      .map((c) => ({ c, s: fuzzyScore(q, `${c.group} ${c.label}`) }))
+      .map((c) => ({ c, s: fuzzyScore(q, `${commandGroup(c)} ${commandLabel(c)}`) }))
       .filter((x) => x.s >= 0)
       .sort((a, b) => a.s - b.s)
       .slice(0, 50)

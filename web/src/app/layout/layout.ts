@@ -165,9 +165,23 @@ export function layoutTree(
   }
   const out = new Map<NodeId, Point>();
   out.set(rootId, { ...origin });
+  // A node's manual offset also moves its whole subtree; the root uses x/y instead.
+  const offsets = new Map<NodeId, Point>();
+  const offsetOf = (id: NodeId): Point => {
+    if (id === rootId) return { x: 0, y: 0 };
+    const cached = offsets.get(id);
+    if (cached) return cached;
+    const node = doc.nodes[id];
+    const base = node.parentId ? offsetOf(node.parentId) : { x: 0, y: 0 };
+    const own = node.layoutOffset;
+    const total = own ? { x: base.x + own.x, y: base.y + own.y } : base;
+    offsets.set(id, total);
+    return total;
+  };
   for (const [id, r] of rel) {
     const p = axis.toPoint(r.depth, r.breadth);
-    out.set(id, { x: origin.x + p.x, y: origin.y + p.y });
+    const o = offsetOf(id);
+    out.set(id, { x: origin.x + p.x + o.x, y: origin.y + p.y + o.y });
   }
   return out;
 }

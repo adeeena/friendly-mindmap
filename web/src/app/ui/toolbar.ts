@@ -1,14 +1,16 @@
-import { ChangeDetectionStrategy, Component, computed, inject, output } from '@angular/core';
+import { ChangeDetectionStrategy, Component, computed, effect, inject, output, viewChild, ElementRef } from '@angular/core';
+import { ConnectedPosition } from '@angular/cdk/overlay';
 import { CdkMenu, CdkMenuItemRadio, CdkMenuTrigger } from '@angular/cdk/menu';
 import { LayoutDirection, Shape } from '../core/model';
 import { CommandRegistry } from '../editor/commands';
 import { EditorStore, ToolId } from '../editor/editor-store';
+import { MessageKey, t } from '../i18n';
 import { BoardSession } from '../persistence/board-session';
 import { Icon } from './icon';
 
 interface ToolButton {
   id: ToolId;
-  label: string;
+  label: MessageKey;
   icon: string;
   command: string;
 }
@@ -17,39 +19,40 @@ interface ToolButton {
   selector: 'bm-toolbar',
   changeDetection: ChangeDetectionStrategy.OnPush,
   imports: [Icon, CdkMenu, CdkMenuItemRadio, CdkMenuTrigger],
-  host: { class: 'bm-toolbar bm-panel', role: 'toolbar', 'aria-label': 'Editor tools' },
+  host: { class: 'bm-toolbar bm-panel', role: 'toolbar', '[attr.aria-label]': 't("toolbar.label")' },
   template: `
-    <div class="bm-tb-group" role="group" aria-label="Tools">
-      @for (t of tools; track t.id) {
+    <div class="bm-tb-group" role="group" [attr.aria-label]="t('toolbar.tools')">
+      @for (tool of tools; track tool.id) {
         <button
           type="button"
           class="bm-button"
-          [attr.aria-pressed]="store.tool() === t.id"
-          [attr.aria-label]="t.label"
-          [attr.title]="tip(t.label, t.command)"
-          (click)="registry.run(t.command)"
+          [attr.aria-pressed]="store.tool() === tool.id"
+          [attr.aria-label]="t(tool.label)"
+          [attr.title]="tip(t(tool.label), tool.command)"
+          (click)="registry.run(tool.command)"
         >
-          <bm-icon [name]="t.icon" />
+          <bm-icon [name]="tool.icon" />
         </button>
       }
       <button
         type="button"
         class="bm-button bm-split"
-        [attr.aria-label]="'New node shape: ' + shapeLabel()"
-        title="New node shape"
+        [attr.aria-label]="t('toolbar.newNodeShapeLabel', { shape: shapeLabel() })"
+        [attr.title]="t('toolbar.newNodeShape')"
         [cdkMenuTriggerFor]="shapeMenu"
+        [cdkMenuPosition]="menuPositions"
       >
         <bm-icon [name]="store.newNodeKind() === 'checklist' ? 'checklist' : 'shape-' + store.newNodeShape()" [size]="14" />
       </button>
     </div>
     <span class="bm-tb-sep" aria-hidden="true"></span>
-    <div class="bm-tb-group" role="group" aria-label="Layout">
+    <div class="bm-tb-group" role="group" [attr.aria-label]="t('toolbar.layout')">
       <button
         type="button"
         class="bm-button"
-        aria-label="Snap to grid"
+        [attr.aria-label]="t('toolbar.snap')"
         [attr.aria-pressed]="store.settings().snap"
-        [attr.title]="tip('Snap to grid', 'toggle.snap')"
+        [attr.title]="tip(t('toolbar.snap'), 'toggle.snap')"
         (click)="registry.run('toggle.snap')"
       >
         <bm-icon name="snap" />
@@ -57,9 +60,9 @@ interface ToolButton {
       <button
         type="button"
         class="bm-button"
-        aria-label="Auto align"
+        [attr.aria-label]="t('toolbar.autoAlign')"
         [attr.aria-pressed]="store.settings().autoAlign"
-        [attr.title]="tip('Auto align', 'toggle.autoAlign')"
+        [attr.title]="tip(t('toolbar.autoAlign'), 'toggle.autoAlign')"
         (click)="registry.run('toggle.autoAlign')"
       >
         <bm-icon name="align" />
@@ -67,20 +70,21 @@ interface ToolButton {
       <button
         type="button"
         class="bm-button"
-        [attr.aria-label]="'Layout direction: ' + store.settings().direction"
-        [attr.title]="tip('Layout direction', 'layout.cycle')"
+        [attr.aria-label]="t('toolbar.directionLabel', { direction: directionLabel() })"
+        [attr.title]="tip(t('toolbar.direction'), 'layout.cycle')"
         [cdkMenuTriggerFor]="layoutMenu"
+        [cdkMenuPosition]="menuPositions"
       >
         <bm-icon [name]="'layout-' + store.settings().direction" />
       </button>
     </div>
     <span class="bm-tb-sep" aria-hidden="true"></span>
-    <div class="bm-tb-group" role="group" aria-label="History">
+    <div class="bm-tb-group" role="group" [attr.aria-label]="t('toolbar.history')">
       <button
         type="button"
         class="bm-button"
-        aria-label="Undo"
-        [attr.title]="tip('Undo', 'undo')"
+        [attr.aria-label]="t('toolbar.undo')"
+        [attr.title]="tip(t('toolbar.undo'), 'undo')"
         [disabled]="!store.canUndo()"
         (click)="registry.run('undo')"
       >
@@ -89,8 +93,8 @@ interface ToolButton {
       <button
         type="button"
         class="bm-button"
-        aria-label="Redo"
-        [attr.title]="tip('Redo', 'redo')"
+        [attr.aria-label]="t('toolbar.redo')"
+        [attr.title]="tip(t('toolbar.redo'), 'redo')"
         [disabled]="!store.canRedo()"
         (click)="registry.run('redo')"
       >
@@ -98,31 +102,55 @@ interface ToolButton {
       </button>
     </div>
     <span class="bm-tb-sep" aria-hidden="true"></span>
-    <div class="bm-tb-group" role="group" aria-label="File">
-      <button type="button" class="bm-button" aria-label="Save to file" [attr.title]="tip('Save', 'file.save')" (click)="registry.run('file.save')">
-        <bm-icon name="save" />
-      </button>
-      <button type="button" class="bm-button" aria-label="Load from file" [attr.title]="tip('Load', 'file.load')" (click)="registry.run('file.load')">
-        <bm-icon name="load" />
-      </button>
-      <button type="button" class="bm-button" aria-label="Export" title="Export" (click)="registry.run('export.open')">
+    <div class="bm-tb-group" role="group" [attr.aria-label]="t('toolbar.file')">
+      <button type="button" class="bm-button" [attr.aria-label]="t('toolbar.export')" [attr.title]="t('toolbar.export')" (click)="registry.run('export.open')">
         <bm-icon name="export" />
       </button>
     </div>
     <span class="bm-tb-sep" aria-hidden="true"></span>
-    <button
-      type="button"
-      class="bm-button bm-board-btn"
-      [attr.aria-label]="'Boards. Current board: ' + store.doc().name"
-      title="Boards"
-      (click)="openBoards.emit()"
-    >
-      <bm-icon name="boards" />
-      <span class="bm-board-name">{{ store.doc().name }}</span>
-    </button>
+    <div class="bm-tb-group bm-board-group" role="group" [attr.aria-label]="t('toolbar.boards')">
+      @if (store.boardRenaming()) {
+        <form class="bm-row bm-board-rename" (submit)="commitRename($event, renameInput.value)">
+          <label class="visually-hidden" for="bm-board-rename">{{ t('boards.renameLabel') }}</label>
+          <input
+            #renameInput
+            id="bm-board-rename"
+            type="text"
+            maxlength="200"
+            [value]="store.doc().name"
+            (keydown.escape)="cancelRename($event)"
+            (blur)="commitRename($event, renameInput.value)"
+          />
+        </form>
+      } @else {
+        <button
+          type="button"
+          class="bm-button bm-board-btn"
+          [attr.aria-label]="t('toolbar.boardsLabel', { name: store.doc().name })"
+          [attr.title]="t('toolbar.boardsOpen')"
+          (click)="openBoards.emit()"
+        >
+          <bm-icon name="boards" />
+          <span class="bm-board-name">{{ store.doc().name }}</span>
+        </button>
+        <button
+          type="button"
+          class="bm-button"
+          [attr.aria-label]="t('toolbar.rename')"
+          [attr.title]="t('toolbar.rename')"
+          [disabled]="store.readOnly()"
+          (click)="store.boardRenaming.set(true)"
+        >
+          <bm-icon name="edit" />
+        </button>
+      }
+    </div>
     <span class="bm-save-status" role="status" [attr.data-status]="session.status()">{{ statusText() }}</span>
-    <button type="button" class="bm-button" aria-label="Command palette" [attr.title]="tip('Commands', 'palette.open')" (click)="registry.run('palette.open')">
-      <bm-icon name="search" />
+    <button type="button" class="bm-button" [attr.aria-label]="t('toolbar.palette')" [attr.title]="tip(t('toolbar.paletteTip'), 'palette.open')" (click)="registry.run('palette.open')">
+      <bm-icon name="command" />
+    </button>
+    <button type="button" class="bm-button" [attr.aria-label]="t('toolbar.settings')" [attr.title]="t('toolbar.settings')" (click)="registry.run('settings.open')">
+      <bm-icon name="settings" />
     </button>
 
     <ng-template #shapeMenu>
@@ -135,7 +163,7 @@ interface ToolButton {
             [cdkMenuItemChecked]="store.newNodeKind() === 'topic' && store.newNodeShape() === s.id"
             (cdkMenuItemTriggered)="pickShape(s.id)"
           >
-            <bm-icon [name]="'shape-' + s.id" /> {{ s.label }}
+            <bm-icon [name]="'shape-' + s.id" /> {{ t(s.label) }}
           </button>
         }
         <button
@@ -145,7 +173,7 @@ interface ToolButton {
           [cdkMenuItemChecked]="store.newNodeKind() === 'checklist'"
           (cdkMenuItemTriggered)="pickChecklist()"
         >
-          <bm-icon name="checklist" /> Checklist
+          <bm-icon name="checklist" /> {{ t('shape.checklist') }}
         </button>
       </div>
     </ng-template>
@@ -159,7 +187,7 @@ interface ToolButton {
             [cdkMenuItemChecked]="store.settings().direction === d.id"
             (cdkMenuItemTriggered)="setDirection(d.id)"
           >
-            <bm-icon [name]="'layout-' + d.id" /> {{ d.label }}
+            <bm-icon [name]="'layout-' + d.id" /> {{ t(d.label) }}
           </button>
         }
       </div>
@@ -167,50 +195,82 @@ interface ToolButton {
   `,
 })
 export class Toolbar {
+  protected readonly t = t;
   protected readonly store = inject(EditorStore);
   protected readonly registry = inject(CommandRegistry);
   protected readonly session = inject(BoardSession);
   readonly openBoards = output<void>();
+  private readonly renameInput = viewChild<ElementRef<HTMLInputElement>>('renameInput');
+
+  protected readonly menuPositions: ConnectedPosition[] = [
+    { originX: 'end', originY: 'top', overlayX: 'start', overlayY: 'top', offsetX: 8 },
+    { originX: 'start', originY: 'bottom', overlayX: 'start', overlayY: 'top', offsetY: 4 },
+  ];
 
   protected readonly tools: ToolButton[] = [
-    { id: 'pointer', label: 'Pointer', icon: 'pointer', command: 'tool.pointer' },
-    { id: 'hand', label: 'Hand', icon: 'hand', command: 'tool.hand' },
-    { id: 'node', label: 'New node', icon: 'node', command: 'tool.node' },
-    { id: 'connect', label: 'New connection', icon: 'connect', command: 'tool.connect' },
+    { id: 'pointer', label: 'tool.pointer', icon: 'pointer', command: 'tool.pointer' },
+    { id: 'hand', label: 'tool.hand', icon: 'hand', command: 'tool.hand' },
+    { id: 'node', label: 'tool.node', icon: 'node', command: 'tool.node' },
+    { id: 'connect', label: 'tool.connect', icon: 'connect', command: 'tool.connect' },
   ];
-  protected readonly shapes: { id: Shape; label: string }[] = [
-    { id: 'none', label: 'Text only' },
-    { id: 'rectangle', label: 'Rectangle' },
-    { id: 'rounded', label: 'Rounded' },
+  protected readonly shapes: { id: Shape; label: MessageKey }[] = [
+    { id: 'none', label: 'shape.none' },
+    { id: 'rectangle', label: 'shape.rectangle' },
+    { id: 'rounded', label: 'shape.rounded' },
   ];
-  protected readonly directions: { id: LayoutDirection; label: string }[] = [
-    { id: 'horizontal', label: 'Horizontal' },
-    { id: 'vertical', label: 'Vertical' },
-    { id: 'balanced', label: 'Balanced' },
+  protected readonly directions: { id: LayoutDirection; label: MessageKey }[] = [
+    { id: 'horizontal', label: 'layout.horizontal' },
+    { id: 'vertical', label: 'layout.vertical' },
+    { id: 'balanced', label: 'layout.balanced' },
   ];
 
   protected readonly shapeLabel = computed(() =>
     this.store.newNodeKind() === 'checklist'
-      ? 'Checklist'
-      : (this.shapes.find((s) => s.id === this.store.newNodeShape())?.label ?? ''),
+      ? t('shape.checklist')
+      : t(`shape.${this.store.newNodeShape()}` as MessageKey),
   );
+  protected readonly directionLabel = computed(() => t(`layout.${this.store.settings().direction}` as MessageKey));
 
   protected readonly statusText = computed(() => {
     switch (this.session.status()) {
       case 'saving':
-        return 'Saving…';
+        return t('status.saving');
       case 'saved':
-        return this.store.readOnly() ? 'Read-only' : 'Saved';
+        return this.store.readOnly() ? t('status.readOnly') : t('status.saved');
       case 'error':
-        return 'Not saved';
+        return t('status.error');
       default:
         return '';
     }
   });
 
+  constructor() {
+    // Focus the field as soon as it is rendered, whichever action asked for the rename.
+    effect(() => {
+      const input = this.renameInput()?.nativeElement;
+      if (input && this.store.boardRenaming()) {
+        input.focus();
+        input.select();
+      }
+    });
+  }
+
   protected tip(label: string, command: string): string {
     const k = this.registry.shortcutFor(command);
     return k ? `${label} (${k})` : label;
+  }
+
+  protected async commitRename(e: Event, name: string): Promise<void> {
+    e.preventDefault();
+    if (!this.store.boardRenaming()) return;
+    this.store.boardRenaming.set(false);
+    const clean = name.trim();
+    if (clean && clean !== this.store.doc().name) await this.session.rename(this.store.doc().id, clean);
+  }
+
+  protected cancelRename(e: Event): void {
+    e.stopPropagation();
+    this.store.boardRenaming.set(false);
   }
 
   protected pickShape(shape: Shape): void {

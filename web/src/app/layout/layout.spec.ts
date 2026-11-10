@@ -67,6 +67,21 @@ describe('layoutTree', () => {
     assertNoOverlap(rects(pos, sizeOf));
   });
 
+  it('applies a node offset to the node and its subtree but not its siblings', () => {
+    const { doc, root, kids } = tree(2, 1);
+    const sizeOf = () => ({ w: 100, h: 30 });
+    const base = layoutTree(doc, root, sizeOf, 'horizontal', { x: 0, y: 0 });
+    const moved = produce(doc, (d) => {
+      d.nodes[kids[0]].layoutOffset = { x: 40, y: -25 };
+    });
+    const pos = layoutTree(moved, root, sizeOf, 'horizontal', { x: 0, y: 0 });
+    const grand = moved.children[kids[0]][0];
+    expect(pos.get(kids[0])).toEqual({ x: base.get(kids[0])!.x + 40, y: base.get(kids[0])!.y - 25 });
+    expect(pos.get(grand)).toEqual({ x: base.get(grand)!.x + 40, y: base.get(grand)!.y - 25 });
+    expect(pos.get(kids[1])).toEqual(base.get(kids[1]));
+    expect(pos.get(root)).toEqual(base.get(root));
+  });
+
   it('collapsed nodes hide their descendants', () => {
     const { doc, root, kids } = tree(2, 2);
     const collapsed = produce(doc, (d) => {

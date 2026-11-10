@@ -8,6 +8,9 @@ import {
   ColorKey,
   CrossLink,
   DEFAULT_SETTINGS,
+  EDGE_PATTERNS,
+  EdgePattern,
+  EdgeStyle,
   LayoutDirection,
   MindNode,
   ROOT_KEY,
@@ -19,7 +22,15 @@ import { sanitizeRichDoc } from './rich-text';
 
 export const MAX_NODES = 20_000;
 
-export class BoardValidationError extends Error {}
+export class BoardValidationError extends Error {
+  /** i18n message key for user-facing errors; absent for technical validation failures. */
+  constructor(
+    message: string,
+    readonly key?: string,
+  ) {
+    super(message);
+  }
+}
 
 const isObj = (v: unknown): v is Record<string, unknown> => !!v && typeof v === 'object' && !Array.isArray(v);
 const str = (v: unknown, max = 10_000): string | undefined =>
@@ -28,6 +39,16 @@ const num = (v: unknown, fallback = 0): number => (typeof v === 'number' && Numb
 const color = (v: unknown): ColorKey | undefined =>
   COLOR_KEYS.includes(v as ColorKey) ? (v as ColorKey) : undefined;
 const shape = (v: unknown): Shape | undefined => (SHAPES.includes(v as Shape) ? (v as Shape) : undefined);
+
+function edgeStyle(v: unknown): EdgeStyle | undefined {
+  if (!isObj(v)) return undefined;
+  const out: EdgeStyle = {};
+  if (EDGE_PATTERNS.includes(v['pattern'] as EdgePattern)) out.pattern = v['pattern'] as EdgePattern;
+  const c = color(v['color']);
+  if (c) out.color = c;
+  if (typeof v['width'] === 'number' && Number.isFinite(v['width'])) out.width = Math.min(12, Math.max(1, v['width']));
+  return Object.keys(out).length ? out : undefined;
+}
 
 /**
  * Validates untrusted board data (files, storage) and returns a clean,
@@ -61,6 +82,13 @@ export function validateBoardDoc(input: unknown): BoardDoc {
       y: num(raw['y']),
       text: sanitizeRichDoc(raw['text']),
     };
+    if (isObj(raw['layoutOffset'])) {
+      const ox = num(raw['layoutOffset']['x']);
+      const oy = num(raw['layoutOffset']['y']);
+      if (ox || oy) node.layoutOffset = { x: ox, y: oy };
+    }
+    const es = edgeStyle(raw['edgeStyle']);
+    if (es) node.edgeStyle = es;
     const s = shape(raw['shape']);
     if (s) node.shape = s;
     const c = color(raw['color']);
@@ -130,7 +158,11 @@ export function validateBoardDoc(input: unknown): BoardDoc {
       if (!isObj(l)) continue;
       const from = str(l['from'], 100);
       const to = str(l['to'], 100);
-      if (from && to && from !== to && nodes[from] && nodes[to]) links[id] = { id, from, to };
+      if (from && to && from !== to && nodes[from] && nodes[to]) {
+        links[id] = { id, from, to };
+        const es = edgeStyle(l['edgeStyle']);
+        if (es) links[id].edgeStyle = es;
+      }
     }
   }
 

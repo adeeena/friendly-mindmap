@@ -2,7 +2,7 @@
  * @jest-environment node
  */
 import 'fake-indexeddb/auto';
-import { SCHEMA_VERSION, createBoard } from '../core/model';
+import { ROOT_KEY, SCHEMA_VERSION, createBoard, createNode } from '../core/model';
 import { BoardRecord, MemoryBoardRepository, RevisionConflictError } from './board-repository';
 import { IndexedDbBoardRepository } from './indexeddb-repository';
 import { MIGRATIONS, NewerSchemaError, migrateBoard } from './migrations';
@@ -53,11 +53,65 @@ describe.each([
 });
 
 describe('migrations', () => {
-  it('passes v1 through with validation', () => {
+  it('passes current version through with validation', () => {
     const b = migrateBoard({ ...record('a'), revision: 3 });
     expect(b.schemaVersion).toBe(SCHEMA_VERSION);
     expect(b.revision).toBe(3);
     expect(b.doc.id).toBe('a');
+  });
+
+  it('loads a v1 board with no offsets or edge styles', () => {
+    const doc = createBoard('Old', 'old');
+    doc.nodes['r'] = createNode({ id: 'r' });
+    doc.nodes['c'] = createNode({ id: 'c', parentId: 'r', x: 40, y: 8 });
+    doc.children[ROOT_KEY] = ['r'];
+    doc.children['r'] = ['c'];
+    const b = migrateBoard({ schemaVersion: 1, doc, camera: { x: 0, y: 0, zoom: 1 } });
+    expect(b.schemaVersion).toBe(SCHEMA_VERSION);
+    expect(b.doc.nodes['c'].parentId).toBe('r');
+    expect(b.doc.nodes['c'].x).toBe(40);
+    expect(b.doc.nodes['c'].layoutOffset).toBeUndefined();
+    expect(b.doc.nodes['c'].edgeStyle).toBeUndefined();
+  });
+
+  it('keeps valid offsets and edge styles and drops invalid ones', () => {
+    const doc = createBoard('New', 'new');
+    doc.nodes['r'] = createNode({ id: 'r' });
+    doc.nodes['c'] = createNode({
+      id: 'c',
+      parentId: 'r',
+      layoutOffset: { x: 10, y: -5 },
+      edgeStyle: { pattern: 'dashed', color: 'red', width: 4 },
+    });
+    doc.nodes['d'] = createNode({ id: 'd', parentId: 'r' });
+    (doc.nodes['d'] as unknown as Record<string, unknown>)['edgeStyle'] = { pattern: 'wavy', color: 'nope', width: 'x' };
+    doc.children[ROOT_KEY] = ['r'];
+    doc.children['r'] = ['c', 'd'];
+    doc.links['l'] = { id: 'l', from: 'c', to: 'd', edgeStyle: { pattern: 'dotted' } };
+    const b = migrateBoard({ schemaVersion: SCHEMA_VERSION, doc, camera: { x: 0, y: 0, zoom: 1 } });
+    expect(b.doc.nodes['c'].layoutOffset).toEqual({ x: 10, y: -5 });
+    expect(b.doc.nodes['c'].edgeStyle).toEqual({ pattern: 'dashed', color: 'red', width: 4 });
+    expect(b.doc.nodes['d'].edgeStyle).toBeUndefined();
+    expect(b.doc.links['l'].edgeStyle).toEqual({ pattern: 'dotted' });
+  });
+
+  it('accepts palette and older color keys for nodes, tags and edges, and drops unknown ones', () => {
+    const doc = createBoard('Colors', 'colors');
+    doc.nodes['r'] = createNode({ id: 'r', color: 'rose' });
+    doc.nodes['a'] = createNode({ id: 'a', parentId: 'r', color: 'green', edgeStyle: { color: 'navy' } });
+    doc.nodes['b'] = createNode({ id: 'b', parentId: 'r' });
+    (doc.nodes['b'] as unknown as Record<string, unknown>)['color'] = 'chartreuse';
+    doc.tags['t'] = { id: 't', name: 'work', color: 'mint' };
+    doc.tags['old'] = { id: 'old', name: 'legacy', color: 'slate' };
+    doc.children[ROOT_KEY] = ['r'];
+    doc.children['r'] = ['a', 'b'];
+    const b = migrateBoard({ schemaVersion: SCHEMA_VERSION, doc, camera: { x: 0, y: 0, zoom: 1 } });
+    expect(b.doc.nodes['r'].color).toBe('rose');
+    expect(b.doc.nodes['a'].color).toBe('green');
+    expect(b.doc.nodes['a'].edgeStyle?.color).toBe('navy');
+    expect(b.doc.nodes['b'].color).toBeUndefined();
+    expect(b.doc.tags['t'].color).toBe('mint');
+    expect(b.doc.tags['old'].color).toBe('slate');
   });
 
   it('refuses newer versions', () => {
@@ -68,6 +122,6 @@ describe('migrations', () => {
     const steps = { 1: (r: Record<string, unknown>) => ({ ...r, camera: { x: 5, y: 0, zoom: 1 } }) };
     const b = migrateBoard({ ...record('a'), schemaVersion: 1 }, steps, 2);
     expect(b.camera.x).toBe(5);
-    expect(MIGRATIONS).toEqual({});
+    expect(Object.keys(MIGRATIONS)).toEqual(['1']);
   });
 });

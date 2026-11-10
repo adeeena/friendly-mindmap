@@ -1,6 +1,7 @@
 import { ChangeDetectionStrategy, Component, ElementRef, computed, inject } from '@angular/core';
 import { EditorStore } from '../editor/editor-store';
 import { centerOn } from '../editor/camera';
+import { t } from '../i18n';
 
 const W = 200;
 const H = 140;
@@ -11,7 +12,7 @@ const H = 140;
   host: {
     class: 'bm-minimap bm-panel',
     role: 'img',
-    'aria-label': 'Minimap overview. Click to move the view.',
+    '[attr.aria-label]': 't("minimap.label")',
     '(pointerdown)': 'onDown($event)',
     '(pointermove)': 'onMove($event)',
     '(pointerup)': 'dragging = false',
@@ -28,6 +29,7 @@ const H = 140;
   `,
 })
 export class Minimap {
+  protected readonly t = t;
   private readonly store = inject(EditorStore);
   private readonly host = inject<ElementRef<HTMLElement>>(ElementRef);
   protected readonly w = W;

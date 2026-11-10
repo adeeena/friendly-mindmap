@@ -53,7 +53,9 @@ describe('geometry', () => {
     const g = hierarchyEdge({ x: 0, y: 0, w: 100, h: 40 }, { x: 200, y: 100, w: 80, h: 30 }, 'horizontal');
     expect(g.start).toEqual({ x: 100, y: 20 });
     expect(g.end).toEqual({ x: 200, y: 115 });
-    expect(g.d.endsWith('Z')).toBe(true);
+    expect(g.d).toBe(g.center);
+    expect(g.d.endsWith('Z')).toBe(false);
+    expect(g.d.match(/C/g)).toHaveLength(1);
     const v = hierarchyEdge({ x: 0, y: 0, w: 100, h: 40 }, { x: 0, y: 100, w: 100, h: 40 }, 'vertical');
     expect(v.start).toEqual({ x: 50, y: 40 });
     expect(v.end).toEqual({ x: 50, y: 100 });

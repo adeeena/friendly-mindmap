@@ -9,6 +9,7 @@ import {
   BoardSettings,
   Camera,
   ColorKey,
+  EdgeStyle,
   MindNode,
   NodeId,
   ROOT_KEY,
@@ -19,6 +20,7 @@ import {
   textDoc,
 } from '../core/model';
 import { richToPlain } from '../core/rich-text';
+import { MessageKey, t } from '../i18n';
 import {
   DEFAULT_SIZE,
   Point,
@@ -40,8 +42,8 @@ export type EdgeRef = { type: 'hierarchy'; childId: NodeId } | { type: 'link'; i
 export interface DropTarget {
   parentId: NodeId | null;
   index?: number;
-  /** world point for a new root */
-  at?: Point;
+  /** Keep the current parent and add this world delta to the node's manual offset. */
+  offset?: Point;
 }
 
 let txnCounter = 0;
@@ -85,6 +87,8 @@ export class EditorStore {
   readonly dragging = signal(false);
   readonly dragPreview = signal<{ ids: NodeId[]; dx: number; dy: number } | null>(null);
   readonly dropTarget = signal<DropTarget | null>(null);
+  /** True while the current board's name is being edited in the toolbar. */
+  readonly boardRenaming = signal(false);
   readonly notesOpen = signal(false);
   readonly marquee = signal<Rect | null>(null);
   readonly guides = signal<GuideLine[]>([]);
@@ -129,6 +133,8 @@ export class EditorStore {
   });
 
   readonly contextMenu = signal<{ x: number; y: number; nodeId: NodeId } | null>(null);
+  /** Line context menu anchored at a viewport point. */
+  readonly edgeMenu = signal<{ x: number; y: number; edge: EdgeRef } | null>(null);
 
   readonly filterMatches = computed<Set<NodeId> | null>(() => {
     const filter = this.tagFilter();
@@ -144,6 +150,14 @@ export class EditorStore {
     const ids = this.selectedIds();
     return ids.length ? ids[ids.length - 1] : null;
   });
+
+  /** The selection toolbar and emoji bar show only while nodes are selected and nothing else owns the pointer. */
+  readonly selectionBarVisible = computed(() => {
+    if (!this.selectedIds().length || this.editingId() || this.dragging() || this.readOnly()) return false;
+    return this.tool() === 'pointer' && !this.marquee();
+  });
+  /** Emoji picker popover next to the emoji bar. */
+  readonly emojiPicker = signal(false);
 
   // ---------------------------------------------------------------- core ops
 
@@ -166,8 +180,10 @@ export class EditorStore {
     const editing = this.editingId();
     if (editing && !nodes[editing]) this.editingId.set(null);
     const edge = this.selectedEdge();
-    if (edge && ((edge.type === 'link' && !next.links[edge.id]) || (edge.type === 'hierarchy' && !nodes[edge.childId])))
+    if (edge && ((edge.type === 'link' && !next.links[edge.id]) || (edge.type === 'hierarchy' && !nodes[edge.childId]))) {
       this.selectedEdge.set(null);
+      this.edgeMenu.set(null);
+    }
   }
 
   sealHistory(): void {
@@ -193,6 +209,7 @@ export class EditorStore {
     this.history = new History<BoardDoc>();
     this.selection.set(new Set());
     this.selectedEdge.set(null);
+    this.edgeMenu.set(null);
     this.editingId.set(null);
     this.tagFilter.set([]);
     this.readOnly.set(readOnly);
@@ -216,8 +233,8 @@ export class EditorStore {
   label(id: NodeId): string {
     const node = this.doc().nodes[id];
     if (!node) return '';
-    if (node.kind === 'checklist') return richToPlain(node.text) || 'Checklist';
-    return richToPlain(node.text) || 'Untitled';
+    if (node.kind === 'checklist') return richToPlain(node.text) || t('node.checklist');
+    return richToPlain(node.text) || t('node.untitled');
   }
 
   // ---------------------------------------------------------- view helpers
@@ -231,6 +248,7 @@ export class EditorStore {
     for (const id of ids) next.add(id);
     this.selection.set(next);
     this.selectedEdge.set(null);
+    this.edgeMenu.set(null);
   }
 
   toggleSelect(id: NodeId): void {
@@ -239,16 +257,19 @@ export class EditorStore {
     else next.add(id);
     this.selection.set(next);
     this.selectedEdge.set(null);
+    this.edgeMenu.set(null);
   }
 
   selectEdge(edge: EdgeRef | null): void {
     this.selectedEdge.set(edge);
+    this.edgeMenu.set(null);
     if (edge) this.selection.set(new Set());
   }
 
   clearSelection(): void {
     this.selection.set(new Set());
     this.selectedEdge.set(null);
+    this.edgeMenu.set(null);
   }
 
   selectAll(): void {
@@ -330,7 +351,7 @@ export class EditorStore {
       label: 'Add node',
     });
     if (!id) return id;
-    this.announce('Node created');
+    this.announce(t('announce.nodeCreated'));
     if (opts.edit !== false) this.beginEdit(id);
     else this.select([id]);
     return id;
@@ -342,7 +363,7 @@ export class EditorStore {
     const p = free ? this.placeNear(parentId, parentId) : this.rects().get(parentId) ?? { x: 0, y: 0 };
     const id = this.mutate((d) => cmd.addChild(d, parentId, { x: p.x, y: p.y }), { label: 'Add child' });
     if (!id) return null;
-    this.announce(`Child added under ${this.label(parentId)}`);
+    this.announce(t('announce.childAdded', { parent: this.label(parentId) }));
     if (edit) this.beginEdit(id);
     else this.select([id]);
     return id;
@@ -356,7 +377,9 @@ export class EditorStore {
     const p = free ? this.placeNear(refId, null) : this.rects().get(refId) ?? { x: 0, y: 0 };
     const id = this.mutate((d) => cmd.addSibling(d, refId, { x: p.x, y: p.y }), { label: 'Add sibling' });
     if (!id) return null;
-    this.announce(ref.parentId ? `Sibling added under ${this.label(ref.parentId)}` : 'Node created');
+    this.announce(
+      ref.parentId ? t('announce.siblingAdded', { parent: this.label(ref.parentId) }) : t('announce.nodeCreated'),
+    );
     if (edit) this.beginEdit(id);
     else this.select([id]);
     return id;
@@ -373,7 +396,7 @@ export class EditorStore {
       },
       { label: 'Promote' },
     );
-    if (ok) this.announce(`Moved up a level`);
+    if (ok) this.announce(t('announce.movedUp'));
   }
 
   reorder(delta: number, id = this.primaryId()): void {
@@ -382,16 +405,35 @@ export class EditorStore {
   }
 
   reparent(id: NodeId, target: DropTarget): boolean {
+    if (target.offset) return this.offsetNode(id, target.offset);
     const ok = this.mutate(
-      (d) => {
-        const r = cmd.reparent(d, id, target.parentId, target.index);
-        if (r && !target.parentId && target.at) cmd.setPosition(d, id, target.at.x, target.at.y);
-        return r;
-      },
+      (d) => cmd.reparent(d, id, target.parentId, target.index),
       { label: 'Move node' },
     );
-    if (ok) this.announce(target.parentId ? `Moved under ${this.label(target.parentId)}` : 'Detached as a new root');
+    if (ok) {
+      this.announce(
+        target.parentId ? t('announce.movedUnder', { parent: this.label(target.parentId) }) : t('announce.detached'),
+      );
+    }
     return !!ok;
+  }
+
+  /** Moves a node (and its subtree) by `delta` without changing its parent. */
+  offsetNode(id: NodeId, delta: Point): boolean {
+    const node = this.doc().nodes[id];
+    if (!node?.parentId || (!delta.x && !delta.y)) return false;
+    const cur = node.layoutOffset ?? { x: 0, y: 0 };
+    this.mutate((d) => cmd.setLayoutOffset(d, id, { x: cur.x + delta.x, y: cur.y + delta.y }), { label: 'Move node' });
+    return true;
+  }
+
+  /** Returns offset nodes to their automatic layout slots. */
+  resetLayoutOffset(ids: NodeId[] = this.selectedIds()): void {
+    const doc = this.doc();
+    const targets = ids.filter((id) => doc.nodes[id]?.layoutOffset);
+    if (!targets.length) return;
+    this.mutate((d) => targets.forEach((id) => cmd.setLayoutOffset(d, id, null)), { label: 'Reset position' });
+    this.announce(t('announce.positionReset'));
   }
 
   deleteSelection(): void {
@@ -413,14 +455,14 @@ export class EditorStore {
         ? first.parentId
         : [siblings[idx + 1], siblings[idx - 1]].find((s) => s && !removedSet.has(s)) ?? null;
     this.mutate((d) => cmd.deleteSubtrees(d, ids), { label: 'Delete' });
-    this.announce(`${removedSet.size} node${removedSet.size === 1 ? '' : 's'} deleted`);
+    this.announce(removedSet.size === 1 ? t('announce.deletedOne') : t('announce.deletedMany', { n: removedSet.size }));
     this.select(fallback ? [fallback] : []);
   }
 
   deleteEdge(edge: EdgeRef): void {
     if (edge.type === 'link') {
       this.mutate((d) => cmd.removeLink(d, edge.id), { label: 'Delete link' });
-      this.announce('Link deleted');
+      this.announce(t('announce.linkDeleted'));
     } else {
       const pos = this.rects().get(edge.childId);
       this.mutate(
@@ -430,9 +472,27 @@ export class EditorStore {
         },
         { label: 'Detach' },
       );
-      this.announce('Branch detached as a new root');
+      this.announce(t('announce.branchDetached'));
     }
     this.selectedEdge.set(null);
+  }
+
+  /** Opens the line menu for an edge, selecting it first. */
+  openEdgeMenu(edge: EdgeRef, at: Point): void {
+    if (this.readOnly()) return;
+    this.selectEdge(edge);
+    this.edgeMenu.set({ ...at, edge });
+  }
+
+  /** Styles one edge; `null` resets it to the shared default. */
+  setEdgeStyle(edge: EdgeRef, patch: Partial<EdgeStyle> | null): void {
+    this.mutate(
+      (d) => {
+        if (edge.type === 'hierarchy') cmd.setHierarchyEdgeStyle(d, edge.childId, patch);
+        else cmd.setLinkEdgeStyle(d, edge.id, patch);
+      },
+      { label: 'Line style' },
+    );
   }
 
   toggleCollapse(id = this.primaryId()): void {
@@ -441,12 +501,12 @@ export class EditorStore {
     if (!node || !cmd.childrenOf(this.doc(), id).length) return;
     const collapsed = !node.collapsed;
     this.mutate((d) => cmd.setCollapsed(d, id, collapsed), { label: collapsed ? 'Collapse' : 'Expand' });
-    this.announce(collapsed ? 'Collapsed' : 'Expanded');
+    this.announce(collapsed ? t('announce.collapsed') : t('announce.expanded'));
   }
 
   addLink(from: NodeId, to: NodeId): string | null {
     const id = this.mutate((d) => cmd.addLink(d, from, to), { label: 'Add link' });
-    if (id) this.announce(`Linked ${this.label(from)} to ${this.label(to)}`);
+    if (id) this.announce(t('announce.linked', { from: this.label(from), to: this.label(to) }));
     return id ?? null;
   }
 
@@ -560,7 +620,10 @@ export class EditorStore {
     this.mutate(
       (d) => {
         // Bake computed layout positions so nodes stay put in free mode.
-        if (positions) for (const [id, p] of positions) cmd.setPosition(d, id, p.x, p.y);
+        if (positions) {
+          for (const [id, p] of positions) cmd.setPosition(d, id, p.x, p.y);
+          for (const id of Object.keys(d.nodes)) cmd.setLayoutOffset(d, id, null);
+        }
         cmd.setSettings(d, patch);
       },
       { label: 'Settings' },
@@ -571,7 +634,7 @@ export class EditorStore {
     const order: BoardSettings['direction'][] = ['horizontal', 'vertical', 'balanced'];
     const next = order[(order.indexOf(this.settings().direction) + 1) % order.length];
     this.updateSettings({ direction: next });
-    this.announce(`Layout ${next}`);
+    this.announce(t('announce.layout', { direction: t(`layout.${next}` as MessageKey) }));
   }
 
   // ------------------------------------------------------------ clipboard
@@ -630,7 +693,7 @@ export class EditorStore {
     const ids = this.mutate((d) => cmd.pasteSubtrees(d, payload, target, offset), { label: 'Paste' });
     if (ids?.length) {
       this.select(ids);
-      this.announce(`${ids.length} item${ids.length === 1 ? '' : 's'} pasted`);
+      this.announce(ids.length === 1 ? t('announce.pastedOne') : t('announce.pastedMany', { n: ids.length }));
     }
   }
 

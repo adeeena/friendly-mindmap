@@ -137,7 +137,7 @@ test('toolbar fits a 375px wide screen without horizontal scroll', async ({ page
   await page.reload();
   const overflow = await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
   expect(overflow).toBeLessThanOrEqual(0);
-  for (const name of ['Pointer', 'Hand', 'New node', 'Auto align', 'Undo', 'Save to file', 'Command palette']) {
+  for (const name of ['Pointer', 'Hand', 'New node', 'Auto align', 'Undo', 'Export', 'Command palette']) {
     const btn = page.getByRole('button', { name, exact: true });
     await btn.scrollIntoViewIfNeeded();
     await expect(btn).toBeVisible();

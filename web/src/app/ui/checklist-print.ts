@@ -1,5 +1,6 @@
 import { ChangeDetectionStrategy, Component, afterNextRender, input, signal } from '@angular/core';
 import { ChecklistData, checklistOf, checklistProgress } from '../io/checklist-export';
+import { t } from '../i18n';
 import { IndexedDbBoardRepository } from '../persistence/indexeddb-repository';
 import { migrateBoard } from '../persistence/migrations';
 
@@ -17,11 +18,11 @@ import { migrateBoard } from '../persistence/migrations';
             <li [class.done]="i.checked"><span class="box" aria-hidden="true">{{ i.checked ? '☑' : '☐' }}</span> {{ i.text }}</li>
           }
         </ul>
-        <button type="button" class="bm-button no-print" (click)="print()">Print</button>
+        <button type="button" class="bm-button no-print" (click)="print()">{{ t('print.print') }}</button>
       } @else if (error()) {
         <p role="alert">{{ error() }}</p>
       } @else {
-        <p>Loading…</p>
+        <p>{{ t('common.loading') }}</p>
       }
     </main>
   `,
@@ -38,6 +39,7 @@ import { migrateBoard } from '../persistence/migrations';
   `,
 })
 export class ChecklistPrint {
+  protected readonly t = t;
   readonly boardId = input.required<string>();
   readonly nodeId = input.required<string>();
   protected readonly data = signal<ChecklistData | null>(null);
@@ -53,16 +55,16 @@ export class ChecklistPrint {
       const c = rec ? checklistOf(migrateBoard(rec).doc, this.nodeId()) : null;
       if (!c) throw new Error();
       this.data.set(c);
-      document.title = `${c.title} — checklist`;
+      document.title = t('print.title', { title: c.title });
       setTimeout(() => window.print(), 300);
     } catch {
-      this.error.set('This checklist could not be found.');
+      this.error.set(t('print.notFound'));
     }
   }
 
   protected progress(c: ChecklistData): string {
     const p = checklistProgress(c);
-    return `${p.done} of ${p.total} done`;
+    return t('node.ariaProgress', { done: p.done, total: p.total });
   }
 
   protected print(): void {

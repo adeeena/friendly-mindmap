@@ -2,6 +2,7 @@ import { ChangeDetectionStrategy, Component, DestroyRef, ElementRef, computed, e
 import { AttachmentMeta, RichDoc, emptyDoc } from '../core/model';
 import { removeAttachment } from '../core/commands';
 import { EditorStore, newTxn } from '../editor/editor-store';
+import { t } from '../i18n';
 import { BoardSession } from '../persistence/board-session';
 import { Icon } from './icon';
 import { RichEditor } from './rich-editor';
@@ -18,8 +19,8 @@ import { RichEditor } from './rich-editor';
   },
   template: `
     <div class="bm-notes-head">
-      <h2 id="bm-notes-title">Notes{{ node() ? ': ' + title() : '' }}</h2>
-      <button type="button" class="bm-button" aria-label="Close notes" (click)="close()">
+      <h2 id="bm-notes-title">{{ node() ? t('notes.titleFor', { title: title() }) : t('notes.title') }}</h2>
+      <button type="button" class="bm-button" [attr.aria-label]="t('notes.close')" (click)="close()">
         <bm-icon name="close" />
       </button>
     </div>
@@ -27,7 +28,7 @@ import { RichEditor } from './rich-editor';
       @for (key of [n.id]; track key) {
         <bm-rich-editor
           class="bm-note-editor"
-          ariaLabel="Note"
+          [ariaLabel]="t('notes.note')"
           [autofocus]="false"
           [content]="n.note ?? empty"
           (changed)="onNote($event)"
@@ -35,7 +36,7 @@ import { RichEditor } from './rich-editor';
         />
       }
       <section class="bm-attachments" aria-labelledby="bm-att-title">
-        <h3 id="bm-att-title">Attachments</h3>
+        <h3 id="bm-att-title">{{ t('notes.attachments') }}</h3>
         @if (error()) {
           <p class="bm-error" role="alert">{{ error() }}</p>
         }
@@ -49,35 +50,36 @@ import { RichEditor } from './rich-editor';
               }
               <span class="bm-att-name">{{ a.name }}</span>
               <span class="bm-att-size">{{ size(a.size) }}</span>
-              <button type="button" class="bm-button" [attr.aria-label]="'Open ' + a.name" (click)="open(a)">
+              <button type="button" class="bm-button" [attr.aria-label]="t('notes.open', { name: a.name })" (click)="open(a)">
                 <bm-icon name="export" />
               </button>
-              <button type="button" class="bm-button" [attr.aria-label]="'Download ' + a.name" (click)="download(a)">
+              <button type="button" class="bm-button" [attr.aria-label]="t('notes.download', { name: a.name })" (click)="download(a)">
                 <bm-icon name="download" />
               </button>
               @if (!store.readOnly()) {
-                <button type="button" class="bm-button" [attr.aria-label]="'Remove ' + a.name" (click)="remove(a)">
+                <button type="button" class="bm-button" [attr.aria-label]="t('notes.remove', { name: a.name })" (click)="remove(a)">
                   <bm-icon name="trash" />
                 </button>
               }
             </li>
           } @empty {
-            <li class="bm-muted">No attachments. Drop files on a node or use the button below.</li>
+            <li class="bm-muted">{{ t('notes.none') }}</li>
           }
         </ul>
         @if (!store.readOnly()) {
           <label class="bm-button bm-file-btn">
-            <bm-icon name="attach" /> Attach files
+            <bm-icon name="attach" /> {{ t('notes.attach') }}
             <input type="file" multiple class="visually-hidden" (change)="pick($event)" />
           </label>
         }
       </section>
     } @else {
-      <p class="bm-muted">Select a single node to see its note.</p>
+      <p class="bm-muted">{{ t('notes.selectOne') }}</p>
     }
   `,
 })
 export class NotesPanel {
+  protected readonly t = t;
   protected readonly store = inject(EditorStore);
   private readonly session = inject(BoardSession);
   private readonly host = inject<ElementRef<HTMLElement>>(ElementRef);
@@ -152,7 +154,7 @@ export class NotesPanel {
   private async blobUrl(a: AttachmentMeta): Promise<string | null> {
     const blob = await this.session.getAttachment(a.id);
     if (!blob) {
-      this.error.set(`“${a.name}” is not available on this device.`);
+      this.error.set(t('notes.unavailable', { name: a.name }));
       return null;
     }
     // Serve unknown or active types as downloads to avoid executing content in the app origin.

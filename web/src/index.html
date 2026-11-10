@@ -2,10 +2,17 @@
 <html lang="en">
 <head>
   <meta charset="utf-8">
-  <title>BetterMindmap</title>
+  <title>Friendly Mindmap</title>
   <base href="/">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <link rel="icon" type="image/x-icon" href="favicon.ico">
+  <script>
+    // Apply a saved Light/Dark choice before first paint; System relies on the CSS media query.
+    try {
+      var saved = JSON.parse(localStorage.getItem('friendly-mindmap.settings') || '{}');
+      if (saved.theme === 'light' || saved.theme === 'dark') document.documentElement.dataset.theme = saved.theme;
+    } catch (e) {}
+  </script>
 </head>
 <body>
   <app-root></app-root>

@@ -1,6 +1,8 @@
 import { ChangeDetectionStrategy, Component, computed, inject, signal } from '@angular/core';
 import { DIALOG_DATA, DialogRef } from '@angular/cdk/dialog';
+import { APP_INFO } from '../app-info';
 import { EditorStore } from '../editor/editor-store';
+import { MessageKey, t } from '../i18n';
 import { EditorActions } from './editor-actions';
 import { Icon } from './icon';
 
@@ -13,86 +15,86 @@ export type ExportTab = 'file' | 'mermaid' | 'image' | 'checklist';
   host: { class: 'bm-dialog bm-panel bm-export' },
   template: `
     <div class="bm-dialog-head">
-      <h2 id="bm-export-title">Save &amp; export</h2>
-      <button type="button" class="bm-button" aria-label="Close" (click)="ref.close()"><bm-icon name="close" /></button>
+      <h2 id="bm-export-title">{{ t('export.title') }}</h2>
+      <button type="button" class="bm-button" [attr.aria-label]="t('common.close')" (click)="ref.close()"><bm-icon name="close" /></button>
     </div>
-    <div class="bm-tabs" role="tablist" aria-label="Export type">
-      @for (t of tabs(); track t.id) {
+    <div class="bm-tabs" role="tablist" [attr.aria-label]="t('export.type')">
+      @for (tab of tabs(); track tab.id) {
         <button
           type="button"
           role="tab"
           class="bm-button"
-          [id]="'bm-tab-' + t.id"
-          [attr.aria-selected]="tab() === t.id"
-          [attr.aria-controls]="'bm-panel-' + t.id"
-          [attr.tabindex]="tab() === t.id ? 0 : -1"
-          (click)="tab.set(t.id)"
+          [id]="'bm-tab-' + tab.id"
+          [attr.aria-selected]="current() === tab.id"
+          [attr.aria-controls]="'bm-panel-' + tab.id"
+          [attr.tabindex]="current() === tab.id ? 0 : -1"
+          (click)="current.set(tab.id)"
           (keydown)="tabKey($event)"
         >
-          {{ t.label }}
+          {{ t(tab.label) }}
         </button>
       }
     </div>
-    <section role="tabpanel" [id]="'bm-panel-' + tab()" [attr.aria-labelledby]="'bm-tab-' + tab()" class="bm-tabpanel">
-      @switch (tab()) {
+    <section role="tabpanel" [id]="'bm-panel-' + current()" [attr.aria-labelledby]="'bm-tab-' + current()" class="bm-tabpanel">
+      @switch (current()) {
         @case ('file') {
-          <p>Save the whole board as a Better Mindmap file you can load later.</p>
+          <p>{{ t('export.fileIntro', { app: appName }) }}</p>
           <label class="bm-check-label">
             <input type="checkbox" [checked]="withAttachments()" (change)="withAttachments.set($any($event.target).checked)" [disabled]="!actions.hasAttachments()" />
-            Embed attachments (.bmm.zip)
+            {{ t('export.embed') }}
           </label>
           <div class="bm-dialog-actions">
-            <button type="button" class="bm-button bm-primary" cdkFocusInitial (click)="save()"><bm-icon name="save" /> Save file</button>
+            <button type="button" class="bm-button bm-primary" cdkFocusInitial (click)="save()"><bm-icon name="save" /> {{ t('export.saveFile') }}</button>
           </div>
         }
         @case ('mermaid') {
           <p class="bm-warning" role="note">
-            Mermaid keeps the hierarchy and text only. Positions, cross-links, colors, tags, notes and attachments are not included.
+            {{ t('export.mermaidWarn') }}
           </p>
-          <label for="bm-mermaid-text" class="visually-hidden">Mermaid text</label>
+          <label for="bm-mermaid-text" class="visually-hidden">{{ t('export.mermaidText') }}</label>
           <textarea id="bm-mermaid-text" class="bm-code" readonly rows="10" [value]="mermaid()"></textarea>
           <div class="bm-dialog-actions">
-            <button type="button" class="bm-button" (click)="actions.copyText(mermaid(), 'Mermaid')"><bm-icon name="copy" /> Copy</button>
-            <button type="button" class="bm-button bm-primary" (click)="actions.downloadMermaid()"><bm-icon name="download" /> Download .mmd</button>
+            <button type="button" class="bm-button" (click)="actions.copyText(mermaid(), t('export.tabMermaid'))"><bm-icon name="copy" /> {{ t('export.copy') }}</button>
+            <button type="button" class="bm-button bm-primary" (click)="actions.downloadMermaid()"><bm-icon name="download" /> {{ t('export.downloadMmd') }}</button>
           </div>
         }
         @case ('image') {
           <fieldset>
-            <legend>Format</legend>
+            <legend>{{ t('export.format') }}</legend>
             <label><input type="radio" name="fmt" [checked]="format() === 'png'" (change)="format.set('png')" /> PNG</label>
             <label><input type="radio" name="fmt" [checked]="format() === 'svg'" (change)="format.set('svg')" /> SVG</label>
           </fieldset>
           @if (format() === 'png') {
             <fieldset>
-              <legend>Resolution</legend>
+              <legend>{{ t('export.resolution') }}</legend>
               <label><input type="radio" name="res" [checked]="ratio() === 1" (change)="ratio.set(1)" /> 1x</label>
               <label><input type="radio" name="res" [checked]="ratio() === 2" (change)="ratio.set(2)" /> 2x</label>
             </fieldset>
           }
           <fieldset>
-            <legend>Content</legend>
-            <label><input type="radio" name="scope" [checked]="!selectionOnly()" (change)="selectionOnly.set(false)" /> Whole board</label>
+            <legend>{{ t('export.content') }}</legend>
+            <label><input type="radio" name="scope" [checked]="!selectionOnly()" (change)="selectionOnly.set(false)" /> {{ t('export.wholeBoard') }}</label>
             <label>
               <input type="radio" name="scope" [checked]="selectionOnly()" [disabled]="!hasSelection()" (change)="selectionOnly.set(true)" />
-              Selection
+              {{ t('export.selection') }}
             </label>
           </fieldset>
-          <label class="bm-check-label"><input type="checkbox" [checked]="forceLight()" (change)="forceLight.set($any($event.target).checked)" /> Light theme</label>
-          <label class="bm-check-label"><input type="checkbox" [checked]="background()" (change)="background.set($any($event.target).checked)" /> Background</label>
+          <label class="bm-check-label"><input type="checkbox" [checked]="forceLight()" (change)="forceLight.set($any($event.target).checked)" /> {{ t('export.lightTheme') }}</label>
+          <label class="bm-check-label"><input type="checkbox" [checked]="background()" (change)="background.set($any($event.target).checked)" /> {{ t('export.background') }}</label>
           <div class="bm-dialog-actions">
-            <button type="button" class="bm-button bm-primary" [disabled]="busy()" (click)="image()"><bm-icon name="download" /> Export image</button>
+            <button type="button" class="bm-button bm-primary" [disabled]="busy()" (click)="image()"><bm-icon name="download" /> {{ t('export.exportImage') }}</button>
           </div>
         }
         @case ('checklist') {
           @if (checklist(); as c) {
-            <p>Export “{{ c.title }}” ({{ c.items.length }} items).</p>
+            <p>{{ t('export.checklistIntro', { title: c.title, count: c.items.length }) }}</p>
             <div class="bm-dialog-actions bm-wrap">
-              <button type="button" class="bm-button" (click)="actions.copyChecklist('markdown')"><bm-icon name="copy" /> Markdown</button>
-              <button type="button" class="bm-button" (click)="actions.copyChecklist('text')"><bm-icon name="copy" /> Plain text</button>
+              <button type="button" class="bm-button" (click)="actions.copyChecklist('markdown')"><bm-icon name="copy" /> {{ t('export.markdown') }}</button>
+              <button type="button" class="bm-button" (click)="actions.copyChecklist('text')"><bm-icon name="copy" /> {{ t('export.plainText') }}</button>
               @if (actions.canShare()) {
-                <button type="button" class="bm-button" (click)="actions.shareChecklist()"><bm-icon name="share" /> Share…</button>
+                <button type="button" class="bm-button" (click)="actions.shareChecklist()"><bm-icon name="share" /> {{ t('export.share') }}</button>
               }
-              <button type="button" class="bm-button" (click)="actions.printChecklist()"><bm-icon name="print" /> Print view</button>
+              <button type="button" class="bm-button" (click)="actions.printChecklist()"><bm-icon name="print" /> {{ t('export.print') }}</button>
             </div>
           }
         }
@@ -101,6 +103,8 @@ export type ExportTab = 'file' | 'mermaid' | 'image' | 'checklist';
   `,
 })
 export class ExportDialog {
+  protected readonly t = t;
+  protected readonly appName = APP_INFO.name;
   protected readonly ref = inject(DialogRef);
   protected readonly actions = inject(EditorActions);
   private readonly store = inject(EditorStore);
@@ -108,15 +112,15 @@ export class ExportDialog {
 
   protected readonly checklist = computed(() => this.actions.checklistFor());
   protected readonly tabs = computed(() => {
-    const t: { id: ExportTab; label: string }[] = [
-      { id: 'file', label: 'File' },
-      { id: 'mermaid', label: 'Mermaid' },
-      { id: 'image', label: 'Image' },
+    const list: { id: ExportTab; label: MessageKey }[] = [
+      { id: 'file', label: 'export.tabFile' },
+      { id: 'mermaid', label: 'export.tabMermaid' },
+      { id: 'image', label: 'export.tabImage' },
     ];
-    if (this.checklist()) t.push({ id: 'checklist', label: 'Checklist' });
-    return t;
+    if (this.checklist()) list.push({ id: 'checklist', label: 'export.tabChecklist' });
+    return list;
   });
-  protected readonly tab = signal<ExportTab>(this.data?.tab ?? 'file');
+  protected readonly current = signal<ExportTab>(this.data?.tab ?? 'file');
   protected readonly withAttachments = signal(false);
   protected readonly format = signal<'png' | 'svg'>('png');
   protected readonly ratio = signal<1 | 2>(2);
@@ -128,14 +132,14 @@ export class ExportDialog {
   protected readonly mermaid = computed(() => this.actions.mermaid());
 
   protected tabKey(e: KeyboardEvent): void {
-    const ids = this.tabs().map((t) => t.id);
-    const i = ids.indexOf(this.tab());
+    const ids = this.tabs().map((x) => x.id);
+    const i = ids.indexOf(this.current());
     let next = i;
     if (e.key === 'ArrowRight') next = (i + 1) % ids.length;
     else if (e.key === 'ArrowLeft') next = (i - 1 + ids.length) % ids.length;
     else return;
     e.preventDefault();
-    this.tab.set(ids[next]);
+    this.current.set(ids[next]);
     setTimeout(() => document.getElementById('bm-tab-' + ids[next])?.focus());
   }
 

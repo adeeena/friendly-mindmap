@@ -17,6 +17,7 @@ import { textDoc } from '../core/model';
 import { isRichEmpty, richToHtml } from '../core/rich-text';
 import { EditorStore, newTxn } from '../editor/editor-store';
 import { CommandRegistry, isMac } from '../editor/commands';
+import { t } from '../i18n';
 import { checklistOf, checklistProgress } from '../io/checklist-export';
 import { ChecklistItems } from './checklist-items';
 import { Icon } from './icon';
@@ -94,7 +95,7 @@ function replayEditorKey(editor: Editor, token: string): void {
           class="bm-check"
           [checked]="!!node().checked"
           [disabled]="store.readOnly()"
-          [attr.aria-label]="'Done: ' + label()"
+          [attr.aria-label]="t('node.done', { text: label() })"
           (change)="toggleChecked($event)"
           (click)="$event.stopPropagation()"
         />
@@ -106,7 +107,7 @@ function replayEditorKey(editor: Editor, token: string): void {
         @for (session of [store.editSession()]; track session) {
           <bm-rich-editor
             class="bm-text"
-            ariaLabel="Node text"
+            [ariaLabel]="t('node.text')"
             [content]="editContent()"
             [keyHandler]="keyHandler"
             (ready)="onEditorReady($event)"
@@ -115,7 +116,7 @@ function replayEditorKey(editor: Editor, token: string): void {
           />
         }
       } @else if (empty()) {
-        <div class="bm-text placeholder" aria-hidden="true">{{ node().kind === 'checklist' ? 'Checklist' : 'Untitled' }}</div>
+        <div class="bm-text placeholder" aria-hidden="true">{{ node().kind === 'checklist' ? t('node.checklist') : t('node.untitled') }}</div>
       } @else {
         <div class="bm-text" [innerHTML]="html()"></div>
       }
@@ -125,14 +126,14 @@ function replayEditorKey(editor: Editor, token: string): void {
     }
     @if (tagChips().length || badges()) {
       <div class="bm-node-meta">
-        @for (t of tagChips(); track t.id) {
-          <span class="bm-chip" [style.--chip]="'var(--c-' + t.color + ')'">{{ t.name }}</span>
+        @for (tag of tagChips(); track tag.id) {
+          <span class="bm-chip" [style.--chip]="'var(--c-' + tag.color + ')'">{{ tag.name }}</span>
         }
         @if (progress(); as p) {
-          <span class="bm-badge" [attr.aria-label]="p.done + ' of ' + p.total + ' done'">{{ p.done }}/{{ p.total }}</span>
+          <span class="bm-badge" [attr.aria-label]="t('node.ariaProgress', { done: p.done, total: p.total })">{{ p.done }}/{{ p.total }}</span>
         }
         @if (hasNote()) {
-          <button type="button" class="bm-badge bm-badge-btn" aria-label="Open note" (click)="openNotes($event)">
+          <button type="button" class="bm-badge bm-badge-btn" [attr.aria-label]="t('node.openNote')" (click)="openNotes($event)">
             <bm-icon name="notes" [size]="14" />
           </button>
         }
@@ -140,7 +141,7 @@ function replayEditorKey(editor: Editor, token: string): void {
           <button
             type="button"
             class="bm-badge bm-badge-btn"
-            [attr.aria-label]="node().attachments!.length + ' attachments'"
+            [attr.aria-label]="t('node.attachmentCount', { n: node().attachments!.length })"
             (click)="openNotes($event)"
           >
             <bm-icon name="attach" [size]="14" />{{ node().attachments!.length }}
@@ -155,7 +156,7 @@ function replayEditorKey(editor: Editor, token: string): void {
         [class]="'side-' + childSide()"
         [class.is-collapsed]="node().collapsed"
         tabindex="-1"
-        [attr.aria-label]="node().collapsed ? 'Expand ' + descendantCount() + ' hidden nodes' : 'Collapse branch'"
+        [attr.aria-label]="node().collapsed ? t('node.expand', { n: descendantCount() }) : t('node.collapse')"
         (pointerdown)="$event.stopPropagation()"
         (click)="toggleCollapse($event)"
       >
@@ -168,7 +169,7 @@ function replayEditorKey(editor: Editor, token: string): void {
         class="bm-handle"
         [class]="'side-' + childSide()"
         tabindex="-1"
-        aria-label="Add child"
+        [attr.aria-label]="t('node.addChild')"
         (pointerdown)="$event.stopPropagation()"
         (click)="addChild($event)"
       >
@@ -179,7 +180,7 @@ function replayEditorKey(editor: Editor, token: string): void {
         class="bm-handle"
         [class]="'side-' + siblingSide()"
         tabindex="-1"
-        aria-label="Add sibling"
+        [attr.aria-label]="t('node.addSibling')"
         (pointerdown)="$event.stopPropagation()"
         (click)="addSibling($event)"
       >
@@ -189,6 +190,7 @@ function replayEditorKey(editor: Editor, token: string): void {
   `,
 })
 export class NodeView {
+  protected readonly t = t;
   protected readonly store = inject(EditorStore);
   private readonly registry = inject(CommandRegistry);
   private readonly host = inject<ElementRef<HTMLElement>>(ElementRef);
@@ -258,11 +260,11 @@ export class NodeView {
   });
   protected readonly ariaLabel = computed(() => {
     const parts = [this.label()];
-    if (this.node()?.kind === 'checklist') parts.push('checklist');
-    if (this.todoParent()) parts.push(this.node()?.checked ? 'done' : 'not done');
+    if (this.node()?.kind === 'checklist') parts.push(t('node.ariaChecklist'));
+    if (this.todoParent()) parts.push(this.node()?.checked ? t('node.ariaDone') : t('node.ariaNotDone'));
     const p = this.progress();
-    if (p) parts.push(`${p.done} of ${p.total} done`);
-    if (this.node()?.collapsed) parts.push(`${this.descendantCount()} hidden`);
+    if (p) parts.push(t('node.ariaProgress', { done: p.done, total: p.total }));
+    if (this.node()?.collapsed) parts.push(t('node.ariaHidden', { n: this.descendantCount() }));
     return parts.join(', ');
   });
 

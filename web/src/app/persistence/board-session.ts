@@ -13,6 +13,7 @@ import {
 } from '../core/model';
 import { validateBoardDoc, validateCamera } from '../core/validate';
 import { EditorStore } from '../editor/editor-store';
+import { Msg, t } from '../i18n';
 import { BOARD_REPOSITORY, BoardRepository, MemoryBoardRepository, RevisionConflictError } from './board-repository';
 import { IndexedDbBoardRepository, probeIndexedDb } from './indexeddb-repository';
 import { NewerSchemaError, migrateBoard } from './migrations';
@@ -40,11 +41,11 @@ export class BoardSession {
   private channel: BroadcastChannel | null = null;
 
   readonly status = signal<SaveStatus>('idle');
-  readonly statusMessage = signal<string | null>(null);
+  readonly statusMessage = signal<Msg | null>(null);
   readonly boards = signal<BoardSummary[]>([]);
   readonly ready = signal(false);
-  readonly storageWarning = signal<string | null>(null);
-  readonly conflictMessage = signal<string | null>(null);
+  readonly storageWarning = signal<Msg | null>(null);
+  readonly conflictMessage = signal<Msg | null>(null);
 
   private revision: number | null = null;
   private dirty = false;
@@ -70,7 +71,7 @@ export class BoardSession {
       if (await probeIndexedDb()) this.repo = new IndexedDbBoardRepository();
       else {
         this.repo = new MemoryBoardRepository();
-        this.storageWarning.set('On-device storage is unavailable. Changes will be lost on reload — export to keep them.');
+        this.storageWarning.set({ key: 'msg.storageUnavailable' });
       }
     }
     this.setupLifecycle(destroyRef);
@@ -78,7 +79,7 @@ export class BoardSession {
     const last = await this.repo.getMeta<string>(LAST_BOARD_KEY).catch(() => undefined);
     const target = (last && this.boards().find((b) => b.id === last)?.id) ?? this.boards()[0]?.id;
     if (target) await this.open(target);
-    else await this.create('Untitled board');
+    else await this.create(t('board.untitled'));
     this.ready.set(true);
   }
 
@@ -146,20 +147,20 @@ export class BoardSession {
       }
       this.dirty = true;
       this.status.set('error');
-      this.statusMessage.set('Saving failed. Storage may be full or unavailable — export the board to keep your work.');
+      this.statusMessage.set({ key: 'msg.saveFailed' });
     }
   }
 
   /** Our unsaved edits collide with a newer save: keep ours as a copy, load theirs. */
   private async resolveConflict(): Promise<void> {
     const mine = cloneJson(this.store.doc());
-    const copyName = `${mine.name} (conflict copy)`;
+    const copyName = t('board.conflictCopy', { name: mine.name });
     const copy: BoardDoc = { ...mine, id: createId(), name: copyName };
     await this.repo.save(
       { id: copy.id, name: copy.name, schemaVersion: SCHEMA_VERSION, updatedAt: Date.now(), doc: copy, camera: this.store.camera() },
       null,
     );
-    this.conflictMessage.set(`This board was changed in another tab. Your version was kept as “${copyName}”.`);
+    this.conflictMessage.set({ key: 'msg.conflict', params: { name: copyName } });
     await this.open(mine.id, { keepCamera: true });
   }
 
@@ -204,7 +205,7 @@ export class BoardSession {
         doc: validateBoardDoc(record.doc),
         camera: validateCamera(record.camera),
       };
-      this.statusMessage.set('This board was saved by a newer version of the app. It is open read-only and will not be overwritten.');
+      this.statusMessage.set({ key: 'msg.newerSchema' });
     }
     const camera = opts.keepCamera ? this.store.camera() : board.camera;
     this.store.loadBoard({ doc: board.doc, camera }, readOnly);
@@ -230,9 +231,11 @@ export class BoardSession {
   }
 
   async rename(id: string, name: string): Promise<void> {
-    const clean = name.trim().slice(0, 200) || 'Untitled board';
+    const clean = name.trim().slice(0, 200) || t('board.untitled');
     if (id === this.store.doc().id) {
       this.store.renameBoard(clean);
+      // Save now so the boards list shows the new name without waiting for the autosave effect.
+      this.dirty = true;
       await this.flush();
       return;
     }
@@ -248,7 +251,7 @@ export class BoardSession {
     const rec = await this.repo.load(id);
     if (!rec) return null;
     const src = migrateBoard(rec);
-    const copy: BoardDoc = { ...cloneJson(src.doc), id: createId(), name: `${src.doc.name} copy` };
+    const copy: BoardDoc = { ...cloneJson(src.doc), id: createId(), name: t('board.copy', { name: src.doc.name }) };
     await this.repo.save(
       { id: copy.id, name: copy.name, schemaVersion: SCHEMA_VERSION, updatedAt: Date.now(), doc: copy, camera: src.camera },
       null,
@@ -275,20 +278,20 @@ export class BoardSession {
   private async openMostRecentOrCreate(): Promise<void> {
     const next = this.boards()[0];
     if (next) await this.open(next.id);
-    else await this.create('Untitled board');
+    else await this.create(t('board.untitled'));
   }
 
   // --------------------------------------------------------- attachments
 
   async attach(nodeId: string, file: File): Promise<{ ok: true } | { ok: false; reason: string }> {
     if (file.size > MAX_ATTACHMENT_BYTES) {
-      return { ok: false, reason: `“${file.name}” is larger than the 10 MB limit.` };
+      return { ok: false, reason: t('error.attachTooLarge', { name: file.name }) };
     }
     const meta: AttachmentMeta = { id: createId(), name: file.name, mime: file.type || 'application/octet-stream', size: file.size };
     try {
       await this.repo.putAttachment(this.store.doc().id, meta, file);
     } catch {
-      return { ok: false, reason: 'The file could not be stored on this device.' };
+      return { ok: false, reason: t('error.attachFailed') };
     }
     this.store.mutate(
       (d) => {

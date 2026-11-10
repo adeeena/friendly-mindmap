@@ -1,15 +1,10 @@
 import { ChangeDetectionStrategy, Component, computed, inject } from '@angular/core';
 import { CdkMenu, CdkMenuItem, CdkMenuItemCheckbox, CdkMenuItemRadio, CdkMenuTrigger } from '@angular/cdk/menu';
-import { COLOR_KEYS, ColorKey, Shape } from '../core/model';
+import { ColorKey, PALETTE_MORE, PALETTE_VIVID, Shape } from '../core/model';
 import { CommandRegistry } from '../editor/commands';
 import { EditorStore } from '../editor/editor-store';
+import { MessageKey, colorName, t } from '../i18n';
 import { Icon } from './icon';
-
-export const EMOJIS = [
-  '⭐', '✅', '❗', '❓', '💡', '🔥', '🎯', '📌', '🚀', '⚠️',
-  '🛒', '📅', '📝', '📎', '🔗', '💬', '👍', '👎', '❤️', '🎉',
-  '🏠', '💼', '📚', '🧪', '🛠️', '💰', '✈️', '🍎', '🐞', '🔒',
-];
 
 @Component({
   selector: 'bm-context-toolbar',
@@ -18,18 +13,18 @@ export const EMOJIS = [
   host: {
     class: 'bm-context-toolbar bm-panel',
     role: 'toolbar',
-    'aria-label': 'Selection',
+    '[attr.aria-label]': 't("selection.label")',
     '[hidden]': '!pos()',
   },
   template: `
     @if (pos()) {
-      <div class="bm-tb-group" role="group" aria-label="Shape">
+      <div class="bm-tb-group" role="group" [attr.aria-label]="t('selection.shape')">
         @for (s of shapes; track s.id) {
           <button
             type="button"
             class="bm-button"
-            [attr.aria-label]="s.label"
-            [attr.title]="s.label"
+            [attr.aria-label]="t(s.label)"
+            [attr.title]="t(s.label)"
             [attr.aria-pressed]="shape() === s.id"
             (click)="store.setShape(s.id)"
           >
@@ -37,114 +32,112 @@ export const EMOJIS = [
           </button>
         }
         @if (shapeOwn()) {
-          <button type="button" class="bm-button bm-mini" title="Reset shape to inherited" aria-label="Reset shape to inherited" (click)="store.setShape(undefined)">↺</button>
+          <button type="button" class="bm-button bm-mini" [attr.title]="t('selection.resetShape')" [attr.aria-label]="t('selection.resetShape')" (click)="store.setShape(undefined)">↺</button>
         }
       </div>
       <span class="bm-tb-sep" aria-hidden="true"></span>
-      <button type="button" class="bm-button" aria-label="Color" title="Color" [cdkMenuTriggerFor]="colorMenu">
+      <button type="button" class="bm-button" [attr.aria-label]="t('selection.color')" [attr.title]="t('selection.color')" [cdkMenuTriggerFor]="colorMenu">
         <span class="bm-swatch" [style.--swatch]="color() ? 'var(--c-' + color() + ')' : 'transparent'"></span>
       </button>
-      <button type="button" class="bm-button" aria-label="Emoji" title="Emoji" [cdkMenuTriggerFor]="emojiMenu">
+      <button
+        type="button"
+        class="bm-button"
+        [attr.aria-label]="t('selection.emoji')"
+        [attr.title]="t('selection.emoji')"
+        aria-haspopup="dialog"
+        [attr.aria-expanded]="store.emojiPicker()"
+        (click)="store.emojiPicker.set(!store.emojiPicker())"
+      >
         @if (emoji()) {
           <span aria-hidden="true">{{ emoji() }}</span>
         } @else {
           <bm-icon name="emoji" />
         }
       </button>
-      <button type="button" class="bm-button" aria-label="Tags" title="Tags" [cdkMenuTriggerFor]="tagMenu">
+      <button type="button" class="bm-button" [attr.aria-label]="t('selection.tags')" [attr.title]="t('selection.tags')" [cdkMenuTriggerFor]="tagMenu">
         <bm-icon name="tag" />
       </button>
       <span class="bm-tb-sep" aria-hidden="true"></span>
       <button
         type="button"
         class="bm-button"
-        aria-label="Todo list for children"
-        title="Todo list for children"
+        [attr.aria-label]="t('selection.todo')"
+        [attr.title]="t('selection.todo')"
         [attr.aria-pressed]="todo()"
         (click)="store.setTodo(!todo())"
       >
         <bm-icon name="todo" />
       </button>
       @if (single() && canConvert()) {
-        <button type="button" class="bm-button" aria-label="Convert to checklist" title="Convert to checklist" (click)="store.convertToChecklist()">
+        <button type="button" class="bm-button" [attr.aria-label]="t('selection.convert')" [attr.title]="t('selection.convert')" (click)="store.convertToChecklist()">
           <bm-icon name="checklist" />
         </button>
       }
       @if (single()) {
-        <button type="button" class="bm-button" aria-label="Notes and attachments" title="Notes and attachments" [attr.aria-pressed]="store.notesOpen()" (click)="store.notesOpen.set(!store.notesOpen())">
+        <button type="button" class="bm-button" [attr.aria-label]="t('selection.notes')" [attr.title]="t('selection.notes')" [attr.aria-pressed]="store.notesOpen()" (click)="store.notesOpen.set(!store.notesOpen())">
           <bm-icon name="notes" />
         </button>
       }
-      <button type="button" class="bm-button" aria-label="Delete" title="Delete" (click)="store.deleteSelection()">
+      <button type="button" class="bm-button" [attr.aria-label]="t('selection.delete')" [attr.title]="t('selection.delete')" (click)="store.deleteSelection()">
         <bm-icon name="trash" />
       </button>
     }
 
     <ng-template #colorMenu>
-      <div class="bm-menu bm-panel bm-color-grid" cdkMenu aria-label="Colors">
-        @for (c of colors; track c) {
-          <button
-            type="button"
-            class="bm-button"
-            cdkMenuItemRadio
-            [cdkMenuItemChecked]="color() === c"
-            [attr.aria-label]="c"
-            (cdkMenuItemTriggered)="setColor(c)"
-          >
-            <span class="bm-swatch" [style.--swatch]="'var(--c-' + c + ')'"></span>
-          </button>
-        }
-        <button type="button" class="bm-button bm-wide" cdkMenuItem (cdkMenuItemTriggered)="setColor(undefined)">
-          {{ colorInherited() ? 'Inherited' : 'Reset to inherited' }}
-        </button>
-      </div>
-    </ng-template>
-    <ng-template #emojiMenu>
-      <div class="bm-menu bm-panel bm-emoji-grid" cdkMenu aria-label="Emoji">
-        @for (e of emojis; track e) {
-          <button type="button" class="bm-button" cdkMenuItemRadio [cdkMenuItemChecked]="emoji() === e" (cdkMenuItemTriggered)="store.setEmoji(e)">
-            {{ e }}
-          </button>
-        }
-        <button type="button" class="bm-button bm-wide" cdkMenuItem (cdkMenuItemTriggered)="store.setEmoji(undefined)">
-          {{ emojiOwn() ? 'Reset to inherited' : 'None' }}
+      <div class="bm-menu bm-panel bm-color-menu" cdkMenu [attr.aria-label]="t('selection.colors')">
+        <div class="bm-swatch-grid" role="group" [attr.aria-label]="t('selection.color')">
+          @for (c of vivid; track c) {
+            <button type="button" class="bm-pal-swatch" cdkMenuItemRadio [cdkMenuItemChecked]="color() === c" [attr.aria-label]="colorName(c)" [style.--swatch]="'var(--c-' + c + ')'" (cdkMenuItemTriggered)="setColor(c)"></button>
+          }
+        </div>
+        <div class="bm-swatch-sep" role="separator"></div>
+        <div class="bm-swatch-grid" role="group" [attr.aria-label]="t('selection.color')">
+          @for (c of more; track c) {
+            <button type="button" class="bm-pal-swatch" cdkMenuItemRadio [cdkMenuItemChecked]="color() === c" [attr.aria-label]="colorName(c)" [style.--swatch]="'var(--c-' + c + ')'" (cdkMenuItemTriggered)="setColor(c)"></button>
+          }
+        </div>
+        <button type="button" class="bm-button" cdkMenuItem (cdkMenuItemTriggered)="setColor(undefined)">
+          {{ colorInherited() ? t('selection.inherited') : t('selection.resetInherited') }}
         </button>
       </div>
     </ng-template>
     <ng-template #tagMenu>
-      <div class="bm-menu bm-panel" cdkMenu aria-label="Tags">
-        @for (t of tags(); track t.id) {
+      <div class="bm-menu bm-panel" cdkMenu [attr.aria-label]="t('selection.tags')">
+        @for (tag of tags(); track tag.id) {
           <button
             type="button"
             class="bm-button"
             cdkMenuItemCheckbox
-            [cdkMenuItemChecked]="hasTag(t.id)"
-            (cdkMenuItemTriggered)="store.toggleTag(t.id)"
+            [cdkMenuItemChecked]="hasTag(tag.id)"
+            (cdkMenuItemTriggered)="store.toggleTag(tag.id)"
           >
-            <span class="bm-chip" [style.--chip]="'var(--c-' + t.color + ')'">{{ t.name }}</span>
-            @if (hasTag(t.id)) {
+            <span class="bm-chip" [style.--chip]="'var(--c-' + tag.color + ')'">{{ tag.name }}</span>
+            @if (hasTag(tag.id)) {
               <bm-icon name="check" [size]="14" />
             }
           </button>
         } @empty {
-          <p class="bm-menu-note">No tags yet.</p>
+          <p class="bm-menu-note">{{ t('selection.noTags') }}</p>
         }
-        <button type="button" class="bm-button" cdkMenuItem (cdkMenuItemTriggered)="registry.run('tags.manage')">Manage tags…</button>
-        <button type="button" class="bm-button" cdkMenuItem (cdkMenuItemTriggered)="store.resetTags()">Reset to inherited</button>
+        <button type="button" class="bm-button" cdkMenuItem (cdkMenuItemTriggered)="registry.run('tags.manage')">{{ t('selection.manageTags') }}</button>
+        <button type="button" class="bm-button" cdkMenuItem (cdkMenuItemTriggered)="store.resetTags()">{{ t('selection.resetInherited') }}</button>
       </div>
     </ng-template>
   `,
 })
 export class ContextToolbar {
+  protected readonly t = t;
   protected readonly store = inject(EditorStore);
   protected readonly registry = inject(CommandRegistry);
-  protected readonly colors = COLOR_KEYS;
-  protected readonly emojis = EMOJIS;
-  protected readonly shapes: { id: Shape; label: string }[] = [
-    { id: 'none', label: 'Text only' },
-    { id: 'rectangle', label: 'Rectangle' },
-    { id: 'rounded', label: 'Rounded' },
+  protected readonly vivid = PALETTE_VIVID;
+  protected readonly more = PALETTE_MORE;
+  protected readonly shapes: { id: Shape; label: MessageKey }[] = [
+    { id: 'none', label: 'shape.none' },
+    { id: 'rectangle', label: 'shape.rectangle' },
+    { id: 'rounded', label: 'shape.rounded' },
   ];
+
+  protected readonly colorName = colorName;
 
   private readonly ids = computed(() => this.store.selectedIds());
   private readonly primary = computed(() => this.store.primaryId());
@@ -162,18 +155,12 @@ export class ContextToolbar {
   protected readonly color = computed(() => this.primaryStyle()?.color);
   protected readonly colorInherited = computed(() => this.primaryNode()?.color === undefined);
   protected readonly emoji = computed(() => this.primaryStyle()?.emoji);
-  protected readonly emojiOwn = computed(() => this.primaryNode()?.emoji !== undefined);
   protected readonly todo = computed(() => !!this.primaryNode()?.todo);
   protected readonly tags = computed(() => Object.values(this.store.doc().tags));
   protected readonly canConvert = computed(() => this.primaryNode()?.kind === 'topic');
 
   /** Docked at the top of the canvas so it never covers neighbouring nodes. */
-  protected readonly pos = computed(() => {
-    const ids = this.ids();
-    if (!ids.length || this.store.editingId() || this.store.dragging() || this.store.readOnly()) return null;
-    if (this.store.tool() !== 'pointer' || this.store.marquee()) return null;
-    return true;
-  });
+  protected readonly pos = computed(() => (this.store.selectionBarVisible() ? true : null));
 
   protected hasTag(tagId: string): boolean {
     const nodes = this.store.doc().nodes;

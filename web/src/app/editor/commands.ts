@@ -1,10 +1,15 @@
 import { DestroyRef, Injectable, inject, signal } from '@angular/core';
 import { DOCUMENT } from '@angular/common';
+import { MessageKey, MsgParams, t } from '../i18n';
 
 export interface Command {
   id: string;
   label: string;
   group: string;
+  /** When set, the palette shows these in the current language instead of `label`/`group`. */
+  labelKey?: MessageKey;
+  labelParams?: MsgParams;
+  groupKey?: MessageKey;
   /** e.g. 'p', 'mod+z', 'mod+shift+z', 'shift+1', 'delete' */
   keys?: string[];
   run: () => void;
@@ -17,6 +22,9 @@ export interface Command {
 
 export const isMac = () =>
   typeof navigator !== 'undefined' && /Mac|iPhone|iPad|iPod/.test(navigator.platform || navigator.userAgent);
+
+export const commandLabel = (c: Command): string => (c.labelKey ? t(c.labelKey, c.labelParams) : c.label);
+export const commandGroup = (c: Command): string => (c.groupKey ? t(c.groupKey) : c.group);
 
 /** Normalizes a keyboard event to a combo string matching `Command.keys`. */
 export function eventCombo(e: KeyboardEvent, mac = isMac()): string {

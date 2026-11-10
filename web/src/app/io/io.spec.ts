@@ -41,6 +41,26 @@ describe('native format', () => {
     expect(await files[0].blob.text()).toBe('abc');
   });
 
+  it('round-trips layout offsets and edge styles', async () => {
+    const { doc, ids } = sample();
+    const styled = produce(doc, (d) => {
+      d.nodes[ids['a']].layoutOffset = { x: 30, y: -12 };
+      d.nodes[ids['a']].edgeStyle = { pattern: 'dashed', color: 'blue', width: 4 };
+      d.links['l1'] = { id: 'l1', from: ids['a'], to: ids['b'], edgeStyle: { pattern: 'dotted', width: 1 } };
+    });
+    const json = toNativeJson(styled, { x: 0, y: 0, zoom: 1 });
+    const { board } = await importBoardFile(new Blob([json]));
+    expect(board.doc).toEqual(styled);
+  });
+
+  it('loads a version 1 file unchanged', async () => {
+    const { doc } = sample();
+    const v1 = JSON.parse(toNativeJson(doc, { x: 0, y: 0, zoom: 1 }));
+    v1.schemaVersion = 1;
+    const { board } = await importBoardFile(new Blob([JSON.stringify(v1)]));
+    expect(board.doc).toEqual(doc);
+  });
+
   it('rejects invalid files', async () => {
     await expect(importBoardFile(new Blob(['not json']))).rejects.toBeInstanceOf(BoardValidationError);
     await expect(importBoardFile(new Blob([JSON.stringify({ format: 'other' })]))).rejects.toBeInstanceOf(

@@ -1,6 +1,53 @@
 @use '@angular/cdk/overlay-prebuilt.css';
 @use 'styles/editor';
 
+// Color picker palette (same in both themes); the older keys stay defined for existing boards.
+$palette: (
+  'violet': #7b2ff7,
+  'orchid': #b23cf5,
+  'fuchsia': #ff4dd8,
+  'rose': #ff0a6c,
+  'vermilion': #ff6240,
+  'tangerine': #ffa800,
+  'sunflower': #ffe000,
+  'lime': #c3f01b,
+  'grass': #5ccb30,
+  'mint': #6ee5cc,
+  'cyan': #00c8ff,
+  'cobalt': #2b6bff,
+  'cream': #fff3b0,
+  'peach': #f7d2b0,
+  'blush': #ffbfbf,
+  'sage': #b2f0c6,
+  'sky': #c2d9ff,
+  'lavender': #d9d3ff,
+  'gold': #ffd84d,
+  'apricot': #ff9f4a,
+  'coral': #ff6b6b,
+  'emerald': #2ecc5f,
+  'azure': #5b9bf5,
+  'periwinkle': #8f7bf0,
+  'ochre': #b38600,
+  'brown': #a0480b,
+  'crimson': #c41212,
+  'forest': #0e7a2e,
+  'navy': #2d55a8,
+  'grape': #6b2fd6,
+  'white': #ffffff,
+  'silver': #e4e4e4,
+  'gray': #adadad,
+  'charcoal': #595959,
+  'black': #1a1a1a,
+  'steel': #7fafd4,
+  'mauve': #d6558f,
+);
+
+:root {
+  @each $name, $hex in $palette {
+    --c-#{$name}: #{$hex};
+  }
+}
+
 @mixin light-theme {
   --focus: #1d4ed8;
   --bg: #f7f7f8;
@@ -72,9 +119,20 @@
 }
 
 @media (prefers-color-scheme: dark) {
-  :root {
+  :root:not([data-theme]) {
     @include dark-theme;
   }
+}
+
+/* Explicit choice from Settings (also set before first paint by index.html). */
+:root[data-theme='dark'] {
+  color-scheme: dark;
+  @include dark-theme;
+}
+
+:root[data-theme='light'] {
+  color-scheme: light;
+  @include light-theme;
 }
 
 /* Forced light theme for image export. */

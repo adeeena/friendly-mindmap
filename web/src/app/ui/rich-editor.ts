@@ -13,6 +13,7 @@ import { Editor } from '@tiptap/core';
 import StarterKit from '@tiptap/starter-kit';
 import { RichDoc } from '../core/model';
 import { isSafeUrl, sanitizeRichDoc } from '../core/rich-text';
+import { t } from '../i18n';
 
 export function richExtensions() {
   return [
@@ -54,7 +55,7 @@ let linkCounter = 0;
   template: `
     @if (linkOpen()) {
       <form class="bm-link-form bm-panel" (submit)="applyLink($event)">
-        <label class="visually-hidden" [attr.for]="linkId">Link URL</label>
+        <label class="visually-hidden" [attr.for]="linkId">{{ t('rich.linkUrl') }}</label>
         <input
           [id]="linkId"
           #linkInput
@@ -64,9 +65,9 @@ let linkCounter = 0;
           (input)="linkValue.set(linkInput.value)"
           (keydown.escape)="closeLink($event)"
         />
-        <button type="submit" class="bm-button">Apply</button>
+        <button type="submit" class="bm-button">{{ t('rich.apply') }}</button>
         @if (linkError()) {
-          <span class="bm-link-error" role="alert">Only http, https and mailto links are allowed.</span>
+          <span class="bm-link-error" role="alert">{{ t('rich.linkError') }}</span>
         }
       </form>
     }
@@ -74,8 +75,9 @@ let linkCounter = 0;
 })
 export class RichEditor implements OnDestroy {
   private readonly host = inject<ElementRef<HTMLElement>>(ElementRef);
+  protected readonly t = t;
   readonly content = input.required<RichDoc>();
-  readonly ariaLabel = input('Text');
+  readonly ariaLabel = input(t('rich.text'));
   readonly autofocus = input<'end' | 'all' | false>('end');
   readonly multiline = input(true);
   readonly keyHandler = input<RichKeyHandler | null>(null);

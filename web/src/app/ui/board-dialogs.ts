@@ -2,6 +2,8 @@ import { ChangeDetectionStrategy, Component, inject, signal } from '@angular/cor
 import { DIALOG_DATA, Dialog, DialogRef } from '@angular/cdk/dialog';
 import { BoardSummary } from '../core/model';
 import { EditorStore } from '../editor/editor-store';
+import { CommandRegistry } from '../editor/commands';
+import { language, t } from '../i18n';
 import { BoardSession } from '../persistence/board-session';
 import { Icon } from './icon';
 
@@ -20,7 +22,7 @@ export interface ConfirmData {
     <h2 id="bm-confirm-title">{{ data.title }}</h2>
     <p id="bm-confirm-msg">{{ data.message }}</p>
     <div class="bm-dialog-actions">
-      <button type="button" class="bm-button" cdkFocusInitial (click)="ref.close(false)">Cancel</button>
+      <button type="button" class="bm-button" cdkFocusInitial (click)="ref.close(false)">{{ t('common.cancel') }}</button>
       <button type="button" class="bm-button bm-primary" [class.bm-danger]="data.danger" (click)="ref.close(true)">
         {{ data.confirm }}
       </button>
@@ -28,6 +30,7 @@ export interface ConfirmData {
   `,
 })
 export class ConfirmDialog {
+  protected readonly t = t;
   protected readonly data = inject<ConfirmData>(DIALOG_DATA);
   protected readonly ref = inject<DialogRef<boolean>>(DialogRef);
 }
@@ -48,53 +51,78 @@ export function confirmDialog(dialog: Dialog, data: ConfirmData): Promise<boolea
   imports: [Icon],
   host: { class: 'bm-dialog bm-panel bm-boards' },
   template: `
-    <div class="bm-dialog-head">
-      <h2 id="bm-boards-title">Boards</h2>
-      <button type="button" class="bm-button" aria-label="Close" (click)="ref.close()"><bm-icon name="close" /></button>
+    <div class="bm-bd-head">
+      <div class="bm-bd-title">
+        <bm-icon name="boards" [size]="18" />
+        <h2 id="bm-boards-title">{{ t('boards.title') }}</h2>
+      </div>
+      <button type="button" class="bm-button" [attr.aria-label]="t('common.close')" (click)="ref.close()"><bm-icon name="close" /></button>
     </div>
-    <form class="bm-row" (submit)="create($event)">
-      <label class="visually-hidden" for="bm-new-board">New board name</label>
-      <input id="bm-new-board" #newName type="text" placeholder="New board name" cdkFocusInitial maxlength="200" />
-      <button type="submit" class="bm-button bm-primary"><bm-icon name="plus" /> Create</button>
+    <form class="bm-bd-new" (submit)="create($event)">
+      <label class="visually-hidden" for="bm-new-board">{{ t('boards.newName') }}</label>
+      <input id="bm-new-board" #newName type="text" [attr.placeholder]="t('boards.newName')" cdkFocusInitial maxlength="200" />
+      <button type="submit" class="bm-button bm-primary"><bm-icon name="plus" /> {{ t('boards.create') }}</button>
     </form>
-    <ul class="bm-board-list" aria-label="All boards">
+    <ul class="bm-bd-list" [attr.aria-label]="t('boards.all')">
       @for (b of session.boards(); track b.id) {
-        <li [class.current]="b.id === store.doc().id">
+        <li class="bm-bd-item" [class.current]="b.id === store.doc().id">
           @if (renaming() === b.id) {
-            <form class="bm-row bm-grow" (submit)="rename($event, b, nameInput.value)">
-              <label class="visually-hidden" [attr.for]="'bm-rename-' + b.id">Board name</label>
+            <form class="bm-bd-rename" (submit)="rename($event, b, nameInput.value)">
+              <label class="visually-hidden" [attr.for]="'bm-rename-' + b.id">{{ t('boards.name') }}</label>
               <input #nameInput [id]="'bm-rename-' + b.id" type="text" [value]="b.name" maxlength="200" (keydown.escape)="cancelRename($event)" />
-              <button type="submit" class="bm-button">Save</button>
+              <button type="submit" class="bm-button bm-primary" [attr.aria-label]="t('common.save')" [attr.title]="t('common.save')"><bm-icon name="check" /></button>
+              <button type="button" class="bm-button" [attr.aria-label]="t('common.cancel')" [attr.title]="t('common.cancel')" (click)="cancelRename($event)"><bm-icon name="close" /></button>
             </form>
           } @else {
             <button type="button" class="bm-board-open" (click)="open(b)" [attr.aria-current]="b.id === store.doc().id ? 'true' : null">
-              <span class="bm-board-title">{{ b.name }}</span>
-              <span class="bm-muted">{{ when(b.updatedAt) }}</span>
+              <span class="bm-bd-mark" aria-hidden="true">
+                @if (b.id === store.doc().id) {
+                  <bm-icon name="check" [size]="14" />
+                }
+              </span>
+              <span class="bm-bd-text">
+                <span class="bm-board-title">{{ b.name }}</span>
+                <span class="bm-muted">{{ when(b.updatedAt) }}</span>
+              </span>
             </button>
-            <button type="button" class="bm-button" [attr.aria-label]="'Rename ' + b.name" (click)="startRename(b)"><bm-icon name="edit" /></button>
-            <button type="button" class="bm-button" [attr.aria-label]="'Duplicate ' + b.name" (click)="duplicate(b)"><bm-icon name="copy" /></button>
-            <button type="button" class="bm-button" [attr.aria-label]="'Delete ' + b.name" (click)="remove(b)"><bm-icon name="trash" /></button>
+            <div class="bm-bd-actions">
+              <button type="button" class="bm-button" [attr.aria-label]="t('boards.rename', { name: b.name })" [attr.title]="t('toolbar.rename')" (click)="startRename(b)"><bm-icon name="edit" /></button>
+              <button type="button" class="bm-button" [attr.aria-label]="t('boards.duplicate', { name: b.name })" [attr.title]="t('cmd.duplicate')" (click)="duplicate(b)"><bm-icon name="copy" /></button>
+              <button type="button" class="bm-button" [attr.aria-label]="t('boards.delete', { name: b.name })" [attr.title]="t('common.delete')" (click)="remove(b)"><bm-icon name="trash" /></button>
+            </div>
           }
         </li>
       }
     </ul>
+    <div class="bm-bd-foot">
+      <button type="button" class="bm-button" (click)="file('file.save')"><bm-icon name="save" /> {{ t('toolbar.save') }}</button>
+      <button type="button" class="bm-button" (click)="file('file.load')"><bm-icon name="load" /> {{ t('toolbar.load') }}</button>
+    </div>
   `,
 })
 export class BoardSwitcher {
+  protected readonly t = t;
   protected readonly session = inject(BoardSession);
   protected readonly store = inject(EditorStore);
   protected readonly ref = inject(DialogRef);
+  private readonly registry = inject(CommandRegistry);
   private readonly dialog = inject(Dialog);
   protected readonly renaming = signal<string | null>(null);
 
-  protected when(t: number): string {
-    return new Intl.DateTimeFormat(undefined, { dateStyle: 'medium', timeStyle: 'short' }).format(t);
+  /** Runs a file command while the click still counts as a user gesture (the file picker needs it). */
+  protected file(command: 'file.save' | 'file.load'): void {
+    this.registry.run(command);
+    this.ref.close();
+  }
+
+  protected when(ms: number): string {
+    return new Intl.DateTimeFormat(language(), { dateStyle: 'medium', timeStyle: 'short' }).format(ms);
   }
 
   protected async create(e: Event): Promise<void> {
     e.preventDefault();
     const input = (e.target as HTMLFormElement).querySelector('input')!;
-    await this.session.create(input.value.trim() || 'Untitled board');
+    await this.session.create(input.value.trim() || t('board.untitled'));
     this.ref.close();
   }
 
@@ -125,9 +153,9 @@ export class BoardSwitcher {
 
   protected async remove(b: BoardSummary): Promise<void> {
     const ok = await confirmDialog(this.dialog, {
-      title: 'Delete board?',
-      message: `“${b.name}” and its attachments will be permanently deleted from this device.`,
-      confirm: 'Delete',
+      title: t('boards.deleteTitle'),
+      message: t('boards.deleteMessage', { name: b.name }),
+      confirm: t('common.delete'),
       danger: true,
     });
     if (ok) await this.session.remove(b.id);

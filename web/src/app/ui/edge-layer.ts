@@ -1,5 +1,6 @@
 import { ChangeDetectionStrategy, Component, computed, inject } from '@angular/core';
-import { NodeId } from '../core/model';
+import { dashArray, resolveEdgeStyle } from '../core/edge-style';
+import { EdgeStyle, NodeId } from '../core/model';
 import { EditorStore } from '../editor/editor-store';
 import { center, hierarchyEdge, linkEdge, previewEdge } from '../editor/geometry';
 
@@ -7,7 +8,9 @@ interface DrawnEdge {
   key: string;
   d: string;
   hit: string;
-  color: string | null;
+  stroke: string | null;
+  width: number;
+  dash: string | null;
   selected: boolean;
   dimmed: boolean;
   ref: string;
@@ -17,7 +20,7 @@ interface DrawnEdge {
 @Component({
   selector: 'bm-edge-layer',
   changeDetection: ChangeDetectionStrategy.OnPush,
-  host: { class: 'bm-edge-layer', 'aria-hidden': 'true' },
+  host: { class: 'bm-edge-layer', 'aria-hidden': 'true', '[class.animate]': 'animate()' },
   template: `
     <svg class="bm-edges" overflow="visible" width="1" height="1" focusable="false">
       <defs>
@@ -32,7 +35,9 @@ interface DrawnEdge {
           [class.dimmed]="e.dimmed"
           [attr.d]="e.d"
           [attr.data-ends]="e.ends"
-          [style.fill]="e.color"
+          [style.stroke]="e.stroke"
+          [style.stroke-width.px]="e.width"
+          [style.stroke-dasharray]="e.dash"
         />
         <path class="bm-edge-hit" [attr.d]="e.hit" [attr.data-edge]="e.ref" [style.stroke-width.px]="hitWidth()" />
       }
@@ -43,8 +48,9 @@ interface DrawnEdge {
           [class.dimmed]="e.dimmed"
           [attr.d]="e.d"
           [attr.data-ends]="e.ends"
-          [style.stroke]="e.color"
-          marker-end="url(#bm-arrow)"
+          [style.stroke]="e.stroke"
+          [style.stroke-width.px]="e.width"
+          [style.stroke-dasharray]="e.dash"
         />
         <path class="bm-edge-hit" [attr.d]="e.hit" [attr.data-edge]="e.ref" [style.stroke-width.px]="hitWidth()" />
       }
@@ -57,6 +63,8 @@ interface DrawnEdge {
 export class EdgeLayer {
   private readonly store = inject(EditorStore);
   protected readonly hitWidth = computed(() => 12 / this.store.camera().zoom);
+  /** Edges follow layout animations but must track nodes exactly while dragging. */
+  protected readonly animate = computed(() => this.store.settings().autoAlign && !this.store.dragging());
 
   /** Nearest visible ancestor (cross-links into collapsed branches). */
   private visibleEndpoint(id: NodeId): NodeId | null {
@@ -67,9 +75,12 @@ export class EdgeLayer {
     return cur;
   }
 
-  private colorOf(id: NodeId): string | null {
-    const c = this.store.styles()[id]?.color;
-    return c ? `var(--c-${c})` : null;
+  /** Explicit edge color, else the source node's color, else the theme default. */
+  private appearance(style: EdgeStyle | undefined, fallbackNode: NodeId, selected: boolean) {
+    const r = resolveEdgeStyle(style);
+    const key = r.color ?? this.store.styles()[fallbackNode]?.color;
+    const width = selected ? r.width + 1 : r.width;
+    return { stroke: key ? `var(--c-${key})` : null, width, dash: dashArray(r.pattern, width) };
   }
 
   protected readonly hierarchy = computed<DrawnEdge[]>(() => {
@@ -86,12 +97,13 @@ export class EdgeLayer {
       const cr = rects.get(id);
       if (!pr || !cr) continue;
       const g = hierarchyEdge(pr, cr, dir);
+      const selected = sel?.type === 'hierarchy' && sel.childId === id;
       out.push({
         key: id,
         d: g.d,
         hit: g.center,
-        color: this.colorOf(id),
-        selected: sel?.type === 'hierarchy' && sel.childId === id,
+        ...this.appearance(doc.nodes[id].edgeStyle, id, selected),
+        selected,
         dimmed: !!filter && !(filter.has(id) && filter.has(parentId)),
         ref: `h:${id}`,
         ends: `${parentId},${id}`,
@@ -114,12 +126,13 @@ export class EdgeLayer {
       const b = rects.get(to);
       if (!a || !b) continue;
       const g = linkEdge(a, b);
+      const selected = sel?.type === 'link' && sel.id === link.id;
       out.push({
         key: link.id,
         d: g.d,
         hit: g.center,
-        color: this.colorOf(link.from),
-        selected: sel?.type === 'link' && sel.id === link.id,
+        ...this.appearance(link.edgeStyle, link.from, selected),
+        selected,
         dimmed: !!filter && !(filter.has(link.from) || filter.has(link.to)),
         ref: `l:${link.id}`,
         ends: `${from},${to}`,

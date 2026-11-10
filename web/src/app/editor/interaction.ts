@@ -299,8 +299,11 @@ export class InteractionController {
     if (!target) {
       st.dwell = undefined;
       const r = s.rects().get(st.id)!;
-      const at = { x: r.x + dx, y: r.y + dy };
-      target = { parentId: null, at: s.settings().snap ? { x: snapValue(at.x), y: snapValue(at.y) } : at };
+      let off = { x: dx, y: dy };
+      if (s.settings().snap) {
+        off = { x: snapValue(r.x + dx) - r.x, y: snapValue(r.y + dy) - r.y };
+      }
+      target = { parentId: null, offset: off };
     }
     s.dropTarget.set(target);
   }

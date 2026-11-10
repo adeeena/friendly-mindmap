@@ -4,6 +4,7 @@ import {
   ChecklistItem,
   ColorKey,
   CrossLink,
+  EdgeStyle,
   MindNode,
   NodeId,
   ROOT_KEY,
@@ -119,6 +120,8 @@ export function promote(doc: BoardDoc, id: NodeId): boolean {
   if (!node?.parentId) return false;
   const parent = doc.nodes[node.parentId];
   detachFromParent(doc, id);
+  delete node.layoutOffset;
+  delete node.edgeStyle;
   const grand = parent.parentId;
   const idx = childrenOf(doc, grand).indexOf(parent.id);
   insertChild(doc, grand, id, idx + 1);
@@ -149,6 +152,8 @@ export function reparent(
   if (newParentId && (!doc.nodes[newParentId] || isAncestor(doc, id, newParentId))) return false;
   const sameParent = node.parentId === newParentId;
   const oldIdx = detachFromParent(doc, id);
+  delete node.layoutOffset;
+  if (!sameParent) delete node.edgeStyle;
   let target = index;
   if (sameParent && target !== undefined && oldIdx >= 0 && oldIdx < target) target--;
   insertChild(doc, newParentId, id, target);
@@ -218,6 +223,14 @@ export function setPosition(doc: BoardDoc, id: NodeId, x: number, y: number): vo
   node.y = y;
 }
 
+/** Sets (or clears, when null/zero) the manual offset applied on top of the auto-layout slot. */
+export function setLayoutOffset(doc: BoardDoc, id: NodeId, offset: { x: number; y: number } | null): void {
+  const node = doc.nodes[id];
+  if (!node) return;
+  if (offset && (offset.x || offset.y)) node.layoutOffset = { x: offset.x, y: offset.y };
+  else delete node.layoutOffset;
+}
+
 export function addLink(doc: BoardDoc, from: NodeId, to: NodeId, id = createId()): string | null {
   if (from === to || !doc.nodes[from] || !doc.nodes[to]) return null;
   if (Object.values(doc.links).some((l) => l.from === from && l.to === to)) return null;
@@ -227,6 +240,34 @@ export function addLink(doc: BoardDoc, from: NodeId, to: NodeId, id = createId()
 
 export function removeLink(doc: BoardDoc, id: string): void {
   delete doc.links[id];
+}
+
+/** Merges `patch` into `current`; an explicit undefined removes that field, null resets everything. */
+function mergeEdgeStyle(current: EdgeStyle | undefined, patch: Partial<EdgeStyle> | null): EdgeStyle | undefined {
+  if (patch === null) return undefined;
+  const next: EdgeStyle = { ...current };
+  for (const [k, v] of Object.entries(patch) as [keyof EdgeStyle, unknown][]) {
+    if (v === undefined) delete next[k];
+    else (next as Record<string, unknown>)[k] = v;
+  }
+  return Object.keys(next).length ? next : undefined;
+}
+
+/** Styles the incoming hierarchy edge of `childId`. */
+export function setHierarchyEdgeStyle(doc: BoardDoc, childId: NodeId, patch: Partial<EdgeStyle> | null): void {
+  const node = doc.nodes[childId];
+  if (!node?.parentId) return;
+  const next = mergeEdgeStyle(node.edgeStyle, patch);
+  if (next) node.edgeStyle = next;
+  else delete node.edgeStyle;
+}
+
+export function setLinkEdgeStyle(doc: BoardDoc, linkId: string, patch: Partial<EdgeStyle> | null): void {
+  const link = doc.links[linkId];
+  if (!link) return;
+  const next = mergeEdgeStyle(link.edgeStyle, patch);
+  if (next) link.edgeStyle = next;
+  else delete link.edgeStyle;
 }
 
 export function upsertTag(doc: BoardDoc, tag: TagDef): void {

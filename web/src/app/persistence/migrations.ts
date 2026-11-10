@@ -4,7 +4,10 @@ import { BoardValidationError, validateBoardDoc, validateCamera } from '../core/
 type RawBoard = Record<string, unknown>;
 
 /** Ordered upgrades: MIGRATIONS[n] converts schema n to n + 1. */
-export const MIGRATIONS: Record<number, (raw: RawBoard) => RawBoard> = {};
+export const MIGRATIONS: Record<number, (raw: RawBoard) => RawBoard> = {
+  // v2 only adds optional layoutOffset/edgeStyle fields, so v1 data is already valid.
+  1: (raw) => raw,
+};
 
 export class NewerSchemaError extends Error {
   constructor(readonly version: number) {

@@ -1,6 +1,7 @@
 import { ApplicationRef, ChangeDetectionStrategy, Component, ElementRef, inject, input, signal } from '@angular/core';
 import { ChecklistItem, createId } from '../core/model';
 import { EditorStore, newTxn } from '../editor/editor-store';
+import { t } from '../i18n';
 
 /** Inline checklist items of a checklist node. */
 @Component({
@@ -8,14 +9,14 @@ import { EditorStore, newTxn } from '../editor/editor-store';
   changeDetection: ChangeDetectionStrategy.OnPush,
   host: { class: 'bm-checklist' },
   template: `
-    <ul role="list" [attr.aria-label]="'Items of ' + label()">
+    <ul role="list" [attr.aria-label]="t('checklist.itemsOf', { label: label() })">
       @for (item of items(); track item.id; let i = $index) {
         <li class="bm-check-row" [class.done]="item.checked">
           <input
             type="checkbox"
             class="bm-check"
             [checked]="item.checked"
-            [attr.aria-label]="'Done: ' + (item.text || 'empty item')"
+            [attr.aria-label]="t('node.done', { text: item.text || t('checklist.emptyItem') })"
             (change)="toggle(item, $event)"
             [disabled]="store.readOnly()"
           />
@@ -24,7 +25,7 @@ import { EditorStore, newTxn } from '../editor/editor-store';
             type="text"
             [value]="item.text"
             [attr.data-item]="item.id"
-            [attr.aria-label]="'Item ' + (i + 1)"
+            [attr.aria-label]="t('checklist.item', { n: i + 1 })"
             [readOnly]="store.readOnly()"
             (input)="edit(item, $event)"
             (keydown)="onKey($event, item, i)"
@@ -34,17 +35,18 @@ import { EditorStore, newTxn } from '../editor/editor-store';
       }
     </ul>
     @if (!store.readOnly()) {
-      <button type="button" class="bm-add-item" (click)="add(items().length)">+ Add item</button>
+      <button type="button" class="bm-add-item" (click)="add(items().length)">{{ t('checklist.add') }}</button>
     }
   `,
 })
 export class ChecklistItems {
+  protected readonly t = t;
   protected readonly store = inject(EditorStore);
   private readonly host = inject<ElementRef<HTMLElement>>(ElementRef);
   private readonly appRef = inject(ApplicationRef);
   readonly nodeId = input.required<string>();
   readonly items = input.required<ChecklistItem[]>();
-  readonly label = input('checklist');
+  readonly label = input(t('checklist.default'));
   private txn = signal(newTxn('items'));
 
   private save(items: ChecklistItem[], txn?: string): void {

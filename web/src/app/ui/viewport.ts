@@ -11,6 +11,7 @@ import { DOCUMENT } from '@angular/common';
 import { NodeId } from '../core/model';
 import { EditorStore, EdgeRef } from '../editor/editor-store';
 import { isEditableTarget } from '../editor/commands';
+import { t } from '../i18n';
 import { InteractionController, PointerInfo } from '../editor/interaction';
 import { EdgeLayer } from './edge-layer';
 import { NodeView } from './node-view';
@@ -18,6 +19,12 @@ import { NodeView } from './node-view';
 const INTERACTIVE = 'button, input, textarea, select, a, [contenteditable="true"], .bm-rich-editor, .bm-checklist';
 const LONG_PRESS_MS = 500;
 const DOUBLE_TAP_MS = 400;
+
+function parseEdgeRef(attr: string | null | undefined): EdgeRef | null {
+  if (attr?.startsWith('h:')) return { type: 'hierarchy', childId: attr.slice(2) };
+  if (attr?.startsWith('l:')) return { type: 'link', id: attr.slice(2) };
+  return null;
+}
 
 @Component({
   selector: 'bm-viewport',
@@ -39,7 +46,7 @@ const DOUBLE_TAP_MS = 400;
     <div class="bm-grid" [style.background-size]="gridSize()" [style.background-position]="gridPos()"></div>
     <div class="bm-world" [class.gesture]="store.gesture()" [style.transform]="worldTransform()">
       <bm-edge-layer />
-      <div class="bm-nodes" role="tree" aria-label="Mind map" [attr.aria-multiselectable]="true">
+      <div class="bm-nodes" role="tree" [attr.aria-label]="t('shell.mindMap')" [attr.aria-multiselectable]="true">
         @for (id of store.visibleIds(); track id) {
           <bm-node [nodeId]="id" />
         }
@@ -58,14 +65,12 @@ const DOUBLE_TAP_MS = 400;
         @if (insertionBar(); as b) {
           <line class="bm-insert" [attr.x1]="b.x1" [attr.y1]="b.y1" [attr.x2]="b.x2" [attr.y2]="b.y2" [style.stroke-width.px]="3 / zoom()" />
         }
-        @if (rootDrop(); as r) {
-          <rect class="bm-root-drop" [attr.x]="r.x" [attr.y]="r.y" [attr.width]="r.w" [attr.height]="r.h" rx="8" [style.stroke-width.px]="1.5 / zoom()" />
-        }
       </svg>
     </div>
   `,
 })
 export class Viewport {
+  protected readonly t = t;
   protected readonly store = inject(EditorStore);
   private readonly host = inject<ElementRef<HTMLElement>>(ElementRef);
   private readonly document = inject(DOCUMENT);
@@ -104,14 +109,6 @@ export class Viewport {
     }
     const y = after && before ? (before.y + before.h + after.y) / 2 : after ? after.y - 6 : before!.y + before!.h + 6;
     return { x1: ref.x, y1: y, x2: ref.x + ref.w, y2: y };
-  });
-
-  protected readonly rootDrop = computed(() => {
-    const t = this.store.dropTarget();
-    const preview = this.store.dragPreview();
-    if (!t || t.parentId || !t.at || !preview) return null;
-    const size = this.store.sizeOf(preview.ids[0]);
-    return { x: t.at.x, y: t.at.y, ...size };
   });
 
   private pendingMove: PointerEvent | null = null;
@@ -156,9 +153,7 @@ export class Viewport {
       : (e.target as Element | null);
     const nodeEl = target?.closest?.('[data-node-id]');
     const edgeAttr = target?.closest?.('[data-edge]')?.getAttribute('data-edge') ?? null;
-    let edge: EdgeRef | null = null;
-    if (edgeAttr?.startsWith('h:')) edge = { type: 'hierarchy', childId: edgeAttr.slice(2) };
-    else if (edgeAttr?.startsWith('l:')) edge = { type: 'link', id: edgeAttr.slice(2) };
+    const edge = parseEdgeRef(edgeAttr);
     return { nodeId: nodeEl?.getAttribute('data-node-id') ?? null, edge };
   }
 
@@ -181,12 +176,25 @@ export class Viewport {
     const interactive = target.closest(INTERACTIVE);
     if (interactive && e.button === 0 && this.store.tool() === 'pointer' && !this.controller.spaceHeld) return;
     this.store.contextMenu.set(null);
+    this.store.edgeMenu.set(null);
+    this.store.emojiPicker.set(false);
     if (e.button > 1) return;
     if (e.button === 1) e.preventDefault();
     this.capture(e.pointerId, true);
     const info = this.info(e);
     this.controller.pointerDown(info);
-    if (e.pointerType === 'touch' && info.nodeId) this.startLongPress(e, info.nodeId);
+    if (e.pointerType === 'touch') {
+      const nodeId = info.nodeId;
+      const edge = info.edge;
+      if (nodeId) {
+        this.startLongPress(e, () => {
+          this.store.select([nodeId]);
+          this.store.contextMenu.set({ ...this.localPoint(e), nodeId });
+        });
+      } else if (edge) {
+        this.startLongPress(e, () => this.store.openEdgeMenu(edge, this.localPoint(e)));
+      }
+    }
   }
 
   protected onPointerMove(e: PointerEvent): void {
@@ -251,14 +259,13 @@ export class Viewport {
     }
   }
 
-  private startLongPress(e: PointerEvent, nodeId: NodeId): void {
+  private startLongPress(e: PointerEvent, open: () => void): void {
     this.cancelLongPress();
     const start = this.localPoint(e);
     const timer = setTimeout(() => {
       this.longPress = null;
       this.controller.cancel();
-      this.store.select([nodeId]);
-      this.store.contextMenu.set({ x: start.x, y: start.y, nodeId });
+      open();
     }, LONG_PRESS_MS);
     this.longPress = { timer, start };
   }
@@ -279,6 +286,13 @@ export class Viewport {
   protected onContextMenu(e: MouseEvent): void {
     const target = this.document.elementFromPoint(e.clientX, e.clientY) ?? (e.target as Element);
     const nodeEl = target.closest('[data-node-id]');
+    const edge = parseEdgeRef(target.closest('[data-edge]')?.getAttribute('data-edge'));
+    if (!nodeEl && edge) {
+      e.preventDefault();
+      this.store.contextMenu.set(null);
+      this.store.openEdgeMenu(edge, this.localPoint(e));
+      return;
+    }
     if (!nodeEl || target.closest('[contenteditable="true"]')) return;
     e.preventDefault();
     const id = nodeEl.getAttribute('data-node-id')!;
