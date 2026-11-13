@@ -1,5 +1,6 @@
-# Complete stack: Caddy (public TLS) -> nginx (frontend + API proxy) -> API -> PostgreSQL + RustFS.
-# The public profile publishes only Caddy. Required secrets come from containers/.env or the shell.
+# Complete application stack: nginx (frontend + API proxy) -> API -> PostgreSQL + RustFS.
+# Public TLS and routing live in the separate internal-routing Compose project.
+# Required secrets come from containers/.env or the shell.
 # The API image is built once by the `api` service; the one-shot and tool services reuse it.
 
 x-api-image: &api-image
@@ -33,7 +34,7 @@ services:
     ports:
       - "${MINDMAP_BIND:-0.0.0.0}:${MINDMAP_HOST_PORT:-${APP_PORT:-6610}}:80"
     networks:
-      - edge
+      - routing
       - proxy
     depends_on:
       api:
@@ -44,26 +45,6 @@ services:
       timeout: 5s
       retries: 5
       start_period: 5s
-    restart: unless-stopped
-
-  caddy:
-    image: caddy:2-alpine
-    profiles: ["public"]
-    environment:
-      APP_DOMAIN: ${APP_DOMAIN:-mindmap.adena.dev}
-      CADDY_SERVER_HEADER: ${CADDY_SERVER_HEADER:-edge-unconfigured}
-    ports:
-      - "443:443"
-      - "${APP_PORT:-6610}:6610"
-    volumes:
-      - ./Caddyfile:/etc/caddy/Caddyfile:ro
-      - caddy-data:/data
-      - caddy-config:/config
-    networks:
-      - edge
-    depends_on:
-      mindmap:
-        condition: service_healthy
     restart: unless-stopped
 
   api:
@@ -197,8 +178,9 @@ services:
     restart: "no"
 
 networks:
-  # Caddy and nginx share this network; only Caddy publishes ports in the public profile.
-  edge: {}
+  # Shared with the separate internal-routing Caddy project.
+  routing:
+    name: ${COMPOSE_PROJECT_NAME:-containers}_routing
   # Private networks: no egress and no host exposure.
   proxy:
     internal: true
@@ -208,5 +190,3 @@ networks:
 volumes:
   postgres-data: {}
   rustfs-data: {}
-  caddy-data: {}
-  caddy-config: {}
