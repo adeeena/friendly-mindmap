@@ -548,14 +548,56 @@ export class BoardSession {
       this.store.mutate((d) => { (d.nodes[nodeId].attachments ??= []).push(meta); }, { label: 'Attach file' });
       return { ok: true };
     } catch (error) {
-      const reason = error instanceof AttachmentPolicyError && error.violation === 'size' ? t('error.attachTooLarge', { name: file.name })
-        : error instanceof AttachmentPolicyError && error.violation === 'count' ? t('error.attachCount')
-          : error instanceof DOMException && error.name === 'QuotaExceededError' ? t('error.attachQuota', { name: file.name })
-            : t('error.attachFailed');
-      return { ok: false, reason };
+      return { ok: false, reason: this.attachFailure(error, file.name) };
     } finally {
       this.attaching.delete(slot);
     }
+  }
+
+  /**
+   * Swaps one attachment's file for another (for example an optimised copy of the same image) in place, as a
+   * single undoable change. The replacement counts instead of the original, so it is allowed at the one-file
+   * limit; the original's bytes stay until the board is next opened so undo can still restore them.
+   */
+  async replaceAttachment(nodeId: string, attachmentId: string, file: File): Promise<{ ok: true } | { ok: false; reason: string }> {
+    const repository = this.repo;
+    const generation = this.generation;
+    const boardId = this.store.doc().id;
+    const node = this.store.doc().nodes[nodeId];
+    if (!node?.attachments?.some((a) => a.id === attachmentId) || this.store.readOnly()) {
+      return { ok: false, reason: t('error.attachFailed') };
+    }
+    const slot = `${boardId}/${nodeId}`;
+    if (repository.attachmentRole !== 'admin' && this.attaching.has(slot)) return { ok: false, reason: t('error.attachCount') };
+    const meta: AttachmentMeta = { id: createId(), name: file.name, mime: file.type || 'application/octet-stream', size: file.size };
+    try {
+      const context = { nodeId, attachments: node.attachments.filter((a) => a.id !== attachmentId) };
+      assertAttachmentWrite(repository.attachmentRole, meta, file, context);
+      this.attaching.add(slot);
+      await repository.putAttachment(boardId, meta, file, context);
+      const stillThere = generation === this.generation && this.store.doc().id === boardId &&
+        this.store.doc().nodes[nodeId]?.attachments?.some((a) => a.id === attachmentId);
+      if (!stillThere) {
+        await repository.deleteAttachment(boardId, meta.id);
+        return { ok: false, reason: t('error.attachFailed') };
+      }
+      this.store.mutate((d) => {
+        const files = d.nodes[nodeId].attachments!;
+        files[files.findIndex((a) => a.id === attachmentId)] = meta;
+      }, { label: 'Optimise image' });
+      return { ok: true };
+    } catch (error) {
+      return { ok: false, reason: this.attachFailure(error, file.name) };
+    } finally {
+      this.attaching.delete(slot);
+    }
+  }
+
+  private attachFailure(error: unknown, name: string): string {
+    if (error instanceof AttachmentPolicyError && error.violation === 'size') return t('error.attachTooLarge', { name });
+    if (error instanceof AttachmentPolicyError && error.violation === 'count') return t('error.attachCount');
+    if (error instanceof DOMException && error.name === 'QuotaExceededError') return t('error.attachQuota', { name });
+    return t('error.attachFailed');
   }
 
   async getAttachment(attachmentId: string): Promise<Blob | null> {

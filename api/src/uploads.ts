@@ -84,16 +84,19 @@ async function initialize(client: PoolClient, upload: Upload, storage: ObjectSto
   await client.query("UPDATE attachment_uploads SET multipart_id=$2,state='uploading' WHERE id=$1", [upload.id, upload.multipart_id]);
 }
 
+/**
+ * A basic user may hold one in-flight upload per block, which keeps staged storage bounded. A file already
+ * published on the block does not count: it may be replaced, and saving the board still rejects a block that
+ * would keep more than one file (see validateAttachmentReferences).
+ */
 async function assertSlot(
   client: PoolClient, account: Account, boardId: string, nodeId: string, upload?: Upload,
 ): Promise<void> {
   if (account.role === 'admin') return;
   const { rows } = await client.query<{ occupied: boolean }>(`SELECT
-    EXISTS (SELECT 1 FROM board_attachment_refs WHERE board_id=$1 AND node_id=$2
-      AND ($3::uuid IS NULL OR attachment_id<>$3))
-    OR EXISTS (SELECT 1 FROM attachment_uploads WHERE board_id=$1 AND node_id=$2
+    EXISTS (SELECT 1 FROM attachment_uploads WHERE board_id=$1 AND node_id=$2
       AND basic_slot AND state IN ('pending','uploading','completed') AND expires_at>now()
-      AND ($4::uuid IS NULL OR id<>$4)) AS occupied`, [boardId, nodeId, upload?.attachment_id ?? null, upload?.id ?? null]);
+      AND ($3::uuid IS NULL OR id<>$3)) AS occupied`, [boardId, nodeId, upload?.id ?? null]);
   if (rows[0]?.occupied) throw new ApiError(422, 'ATTACHMENT_COUNT', 'Basic users can attach one file per block.');
 }
 

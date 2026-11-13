@@ -1,4 +1,5 @@
 import { TestBed } from '@angular/core/testing';
+import { removeAttachment } from '../core/commands';
 import { createBoard, createNode, ROOT_KEY, SCHEMA_VERSION } from '../core/model';
 import { EditorStore } from '../editor/editor-store';
 import { BOARD_REPOSITORY, MemoryBoardRepository } from './board-repository';
@@ -184,5 +185,62 @@ describe('guest attachment session', () => {
     await session.flush();
     expect((await repo.load('guest'))?.name).toBe('Second');
     expect(session.status()).toBe('saved');
+  });
+
+  describe('replacing an attachment', () => {
+    const png = (bytes: number) => new File([new Uint8Array(bytes)], 'photo.png', { type: 'image/png' });
+    const webp = (bytes: number) => new File([new Uint8Array(bytes)], 'photo.webp', { type: 'image/webp' });
+    const currentFiles = () => store.doc().nodes['node']!.attachments;
+
+    async function attachOriginal(): Promise<{ id: string }> {
+      expect(await session.attach('node', png(4000))).toEqual({ ok: true });
+      store.sealHistory();
+      return currentFiles()![0]!;
+    }
+
+    it('swaps a file for its optimised version in a single undoable step', async () => {
+      const original = await attachOriginal();
+      expect(await session.replaceAttachment('node', original.id, webp(900))).toEqual({ ok: true });
+      const [replacement] = currentFiles()!;
+      expect(currentFiles()).toHaveLength(1);
+      expect(replacement).toMatchObject({ name: 'photo.webp', mime: 'image/webp', size: 900 });
+      expect(replacement!.id).not.toBe(original.id);
+      expect((await session.getAttachment(replacement!.id))?.size).toBe(900);
+
+      store.undo();
+      expect(currentFiles()).toHaveLength(1);
+      expect(currentFiles()![0]!.id).toBe(original.id);
+      expect((await session.getAttachment(original.id))?.size).toBe(4000);
+    });
+
+    it('is allowed at the one-file limit yet still enforces the size limit and keeps the original on failure', async () => {
+      const original = await attachOriginal();
+      expect(await session.replaceAttachment('node', original.id, new File([new Uint8Array(5_242_881)], 'big.png', { type: 'image/png' })))
+        .toEqual({ ok: false, reason: '“big.png” is larger than the 5 MiB limit.' });
+      expect(currentFiles()!.map((a) => a.id)).toEqual([original.id]);
+      expect(await repo.listAttachmentIds('guest')).toEqual([original.id]);
+    });
+
+    it('refuses an unknown attachment and a read-only board', async () => {
+      const original = await attachOriginal();
+      expect(await session.replaceAttachment('node', 'missing', webp(10))).toMatchObject({ ok: false });
+      store.readOnly.set(true);
+      expect(await session.replaceAttachment('node', original.id, webp(10))).toMatchObject({ ok: false });
+      expect(currentFiles()!.map((a) => a.id)).toEqual([original.id]);
+    });
+
+    it('discards the new bytes when the original was removed while it was being stored', async () => {
+      const original = await attachOriginal();
+      let release!: () => void;
+      const gate = new Promise<void>((resolve) => { release = resolve; });
+      const put = repo.putAttachment.bind(repo);
+      jest.spyOn(repo, 'putAttachment').mockImplementation(async (...args) => { await gate; await put(...args); });
+      const replacing = session.replaceAttachment('node', original.id, webp(900));
+      store.mutate((doc) => removeAttachment(doc, 'node', original.id), { label: 'Remove attachment' });
+      release();
+      expect(await replacing).toMatchObject({ ok: false });
+      expect(currentFiles()).toBeUndefined();
+      expect(await repo.listAttachmentIds('guest')).toEqual([original.id]);
+    });
   });
 });

@@ -1,12 +1,15 @@
 import { ChangeDetectionStrategy, Component, DestroyRef, ElementRef, computed, effect, inject, signal, untracked } from '@angular/core';
+import { Dialog } from '@angular/cdk/dialog';
 import { AttachmentMeta, RichDoc, emptyDoc } from '../core/model';
 import { removeAttachment } from '../core/commands';
 import { EditorStore, newTxn } from '../editor/editor-store';
 import { t } from '../i18n';
+import { isResizableImage, optimiseImage } from '../io/image-resize';
 import { TransferEvent } from '../persistence/account-sync';
 import { BoardSession } from '../persistence/board-session';
 import { WorkspaceSession } from '../persistence/workspace-session';
 import { Icon } from './icon';
+import { previewImage } from './image-preview-dialog';
 import { RichEditor } from './rich-editor';
 
 @Component({
@@ -45,13 +48,21 @@ import { RichEditor } from './rich-editor';
         <ul>
           @for (a of n.attachments ?? []; track a.id) {
             <li class="bm-att" [attr.data-status]="status(a)">
-              @if (thumbs()[a.id]; as src) {
-                <img [src]="src" alt="" class="bm-thumb" />
+              @if (previewable(a)) {
+                <button type="button" class="bm-thumb-btn" [attr.aria-label]="t('notes.preview', { name: a.name })" (click)="preview(a)">
+                  @if (thumbs()[a.id]; as src) {
+                    <img [src]="src" alt="" class="bm-thumb" />
+                  } @else {
+                    <bm-icon name="image" [size]="22" />
+                  }
+                </button>
               } @else {
                 <bm-icon name="attach" />
               }
-              <span class="bm-att-name">{{ a.name }}</span>
-              <span class="bm-att-size">{{ size(a.size) }}</span>
+              <span class="bm-att-info">
+                <span class="bm-att-name">{{ a.name }}</span>
+                <span class="bm-att-size">{{ size(a.size) }}</span>
+              </span>
               @if (transfers()[a.id]; as tr) {
                 <progress class="bm-att-progress" [attr.aria-label]="t('notes.progress', { name: a.name })" [max]="tr.total || 1" [value]="tr.loaded"></progress>
                 <span class="bm-att-state" role="status">{{ t(tr.kind === 'upload' ? 'notes.uploading' : 'notes.downloading', { percent: percent(tr) }) }}</span>
@@ -71,28 +82,62 @@ import { RichEditor } from './rich-editor';
                   @case ('cloud') { <span class="bm-att-state">{{ t('notes.cloudOnly') }}</span> }
                   @case ('missing') { <span class="bm-att-state">{{ t('notes.missingLocal') }}</span> }
                 }
-                <button type="button" class="bm-button" [attr.aria-label]="t('notes.open', { name: a.name })" (click)="open(a)">
-                  <bm-icon name="export" />
-                </button>
-                <button type="button" class="bm-button" [attr.aria-label]="t('notes.download', { name: a.name })" (click)="download(a)">
-                  <bm-icon name="download" />
-                </button>
-                @if (!store.readOnly()) {
-                  <button type="button" class="bm-button" [attr.aria-label]="t('notes.remove', { name: a.name })" (click)="remove(a)">
-                    <bm-icon name="trash" />
-                  </button>
+                @if (busy().has(a.id)) {
+                  <span class="bm-att-state" role="status">{{ t('notes.optimising') }}</span>
                 }
+                <span class="bm-att-buttons">
+                  <button type="button" class="bm-button" [attr.aria-label]="t('notes.open', { name: a.name })" (click)="open(a)">
+                    <bm-icon name="export" />
+                  </button>
+                  <button type="button" class="bm-button" [attr.aria-label]="t('notes.download', { name: a.name })" (click)="download(a)">
+                    <bm-icon name="download" />
+                  </button>
+                  @if (canOptimise(a)) {
+                    <button
+                      type="button"
+                      class="bm-button"
+                      [disabled]="busy().has(a.id)"
+                      [attr.aria-label]="t('notes.optimise', { name: a.name })"
+                      [attr.title]="t('notes.optimiseTip')"
+                      (click)="optimise(a)"
+                    >
+                      <bm-icon name="compress" />
+                    </button>
+                  }
+                  @if (!store.readOnly()) {
+                    <button type="button" class="bm-button" [disabled]="busy().has(a.id)" [attr.aria-label]="t('notes.remove', { name: a.name })" (click)="remove(a)">
+                      <bm-icon name="trash" />
+                    </button>
+                  }
+                </span>
               }
             </li>
           } @empty {
             <li class="bm-muted">{{ t('notes.none') }}</li>
           }
         </ul>
+        @if (notice()) {
+          <p class="bm-notice" role="status">{{ notice() }}</p>
+        }
         @if (!store.readOnly()) {
-          <label class="bm-button bm-file-btn">
-            <bm-icon name="attach" /> {{ t('notes.attach') }}
-            <input type="file" multiple class="visually-hidden" (change)="pick($event)" />
-          </label>
+          <div class="bm-att-actions">
+            <label class="bm-button bm-file-btn">
+              <bm-icon name="attach" /> {{ t('notes.attach') }}
+              <input type="file" multiple class="visually-hidden" (change)="pick($event)" />
+            </label>
+            <button
+              type="button"
+              class="bm-button bm-file-btn"
+              [disabled]="processing()"
+              [attr.aria-busy]="processing()"
+              [attr.title]="t('notes.attachOptimisedHint')"
+              aria-describedby="bm-att-optimised-hint"
+              (click)="chooseOptimised()"
+            >
+              <bm-icon name="compress" /> {{ t('notes.attachOptimised') }}
+            </button>
+            <span id="bm-att-optimised-hint" class="visually-hidden">{{ t('notes.attachOptimisedHint') }}</span>
+          </div>
         }
       </section>
     } @else {
@@ -106,8 +151,12 @@ export class NotesPanel {
   private readonly session = inject(BoardSession);
   private readonly workspace = inject(WorkspaceSession);
   private readonly host = inject<ElementRef<HTMLElement>>(ElementRef);
+  private readonly dialog = inject(Dialog);
   protected readonly empty: RichDoc = emptyDoc();
   protected readonly error = signal<string | null>(null);
+  protected readonly notice = signal<string | null>(null);
+  protected readonly busy = signal<ReadonlySet<string>>(new Set());
+  protected readonly processing = signal(false);
   protected readonly thumbs = signal<Record<string, string>>({});
   protected readonly transfers = this.workspace.transfers;
   private readonly availability = signal<{ cached: Set<string>; queued: Set<string> } | null>(null);
@@ -123,6 +172,8 @@ export class NotesPanel {
     const n = this.node();
     return n ? this.store.label(n.id) : '';
   });
+  /** Changes only when a different node is selected, not when the selected node is edited. */
+  private readonly nodeId = computed(() => this.node()?.id ?? null);
 
   constructor() {
     effect(() => {
@@ -130,6 +181,10 @@ export class NotesPanel {
       this.txn = newTxn('note');
       this.error.set(null);
       void this.loadThumbs(n?.attachments ?? []);
+    });
+    effect(() => {
+      this.nodeId();
+      untracked(() => this.notice.set(null));
     });
     effect(() => {
       this.node();
@@ -216,17 +271,108 @@ export class NotesPanel {
   }
 
   private async blobUrl(a: AttachmentMeta): Promise<string | null> {
-    let blob: Blob | null = null;
-    try { blob = await this.session.getAttachment(a.id); } catch { /* fall through to a cloud download or an explicit error */ }
-    if (!blob) {
-      blob = await this.fetchMissing(a);
-      if (!blob) return null;
-    }
+    const blob = await this.bytes(a);
+    if (!blob) return null;
     // Serve unknown or active types as downloads to avoid executing content in the app origin.
     const safe = /^(image\/(png|jpeg|gif|webp)|application\/pdf|text\/plain|audio\/|video\/)/.test(a.mime);
     const url = URL.createObjectURL(safe ? blob : new Blob([blob], { type: 'application/octet-stream' }));
     this.urls.push(url);
     return url;
+  }
+
+  /** The file's bytes from this device, downloading a cloud-only file first; null (with an explanation) when unavailable. */
+  private async bytes(a: AttachmentMeta): Promise<Blob | null> {
+    let blob: Blob | null = null;
+    try { blob = await this.session.getAttachment(a.id); } catch { /* fall through to a cloud download or an explicit error */ }
+    return blob ?? (await this.fetchMissing(a));
+  }
+
+  protected previewable(a: AttachmentMeta): boolean {
+    return /^image\/(png|jpeg|gif|webp)$/.test(a.mime);
+  }
+
+  protected canOptimise(a: AttachmentMeta): boolean {
+    return !this.store.readOnly() && isResizableImage(a.mime);
+  }
+
+  protected async preview(a: AttachmentMeta): Promise<void> {
+    const blob = await this.bytes(a);
+    if (!blob) return;
+    const url = URL.createObjectURL(blob.type === a.mime ? blob : new Blob([blob], { type: a.mime }));
+    try {
+      await previewImage(this.dialog, { name: a.name, url, detail: this.size(a.size) });
+    } finally {
+      URL.revokeObjectURL(url);
+    }
+  }
+
+  private setBusy(id: string, on: boolean): void {
+    this.busy.update((current) => {
+      const next = new Set(current);
+      if (on) next.add(id); else next.delete(id);
+      return next;
+    });
+  }
+
+  private describeOptimised(before: AttachmentMeta | File, after: File, width: number, height: number): string {
+    return t('notes.optimised', { name: after.name, width, height, before: this.size(before.size), after: this.size(after.size) });
+  }
+
+  /** Replaces an uploaded image with a resized, recompressed copy; the original is kept if nothing would be gained. */
+  protected async optimise(a: AttachmentMeta): Promise<void> {
+    const n = this.node();
+    if (!n || this.busy().has(a.id)) return;
+    this.setBusy(a.id, true);
+    this.error.set(null);
+    this.notice.set(null);
+    try {
+      const blob = await this.bytes(a);
+      if (!blob) return;
+      const result = await optimiseImage(new File([blob], a.name, { type: a.mime }));
+      if (!result.changed) {
+        if (result.reason === 'failed') this.error.set(t('notes.optimiseFailed', { name: a.name }));
+        else this.notice.set(t('notes.optimiseNone', { name: a.name }));
+        return;
+      }
+      const replaced = await this.session.replaceAttachment(n.id, a.id, result.file);
+      if (!replaced.ok) this.error.set(replaced.reason);
+      else this.notice.set(this.describeOptimised(a, result.file, result.width, result.height));
+    } finally {
+      this.setBusy(a.id, false);
+    }
+  }
+
+  protected chooseOptimised(): void {
+    const input = this.host.nativeElement.ownerDocument.createElement('input');
+    input.type = 'file';
+    input.multiple = true;
+    input.accept = 'image/png,image/jpeg,image/webp';
+    input.onchange = () => void this.pickOptimised(input.files);
+    input.click();
+  }
+
+  /** Resizes each chosen image before it is stored, so a large photo can still fit the basic size limit. */
+  private async pickOptimised(list: FileList | null): Promise<void> {
+    const n = this.node();
+    if (!n || !list?.length) return;
+    const files = Array.from(list);
+    this.processing.set(true);
+    this.error.set(null);
+    this.notice.set(null);
+    const errors: string[] = [];
+    const notes: string[] = [];
+    try {
+      for (const original of files) {
+        const result = await optimiseImage(original);
+        const attached = await this.session.attach(n.id, result.file);
+        if (!attached.ok) errors.push(attached.reason);
+        else if (result.changed) notes.push(this.describeOptimised(original, result.file, result.width, result.height));
+      }
+    } finally {
+      this.processing.set(false);
+    }
+    this.error.set(errors.length ? errors.join(' ') : null);
+    this.notice.set(notes.length ? notes.join(' ') : null);
   }
 
   /** Downloads a cloud-only file once, reporting unavailability instead of pretending it exists. */

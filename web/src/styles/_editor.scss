@@ -1208,6 +1208,23 @@ textarea {
   white-space: nowrap;
 }
 
+.bm-att-info {
+  display: flex;
+  flex: 1 1 6rem;
+  flex-direction: column;
+  min-width: 0;
+
+  .bm-att-name {
+    flex: none;
+  }
+}
+
+.bm-att-buttons {
+  display: flex;
+  gap: 2px;
+  margin-left: auto;
+}
+
 .bm-att-state {
   flex: 1 0 100%;
   color: var(--text-muted);
@@ -1227,16 +1244,82 @@ textarea {
   font-size: 12px;
 }
 
+.bm-thumb-btn {
+  display: inline-grid;
+  place-items: center;
+  flex: 0 0 56px;
+  width: 56px;
+  height: 56px;
+  padding: 0;
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface);
+  color: var(--text-muted);
+  cursor: zoom-in;
+
+  &:hover,
+  &:focus-visible {
+    border-color: var(--accent);
+  }
+}
+
 .bm-thumb {
-  width: 40px;
-  height: 40px;
+  width: 100%;
+  height: 100%;
   object-fit: cover;
-  border-radius: 4px;
+}
+
+.bm-att-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 8px;
+
+  .bm-file-btn {
+    margin-top: 0;
+  }
+}
+
+.bm-notice {
+  margin: 4px 0 0;
+  color: var(--text-muted);
+  font-size: 12px;
 }
 
 .bm-file-btn {
   margin-top: 8px;
   border: 1px dashed var(--border-strong);
+}
+
+.bm-preview {
+  width: min(920px, calc(100vw - 24px));
+}
+
+.bm-preview-title {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.bm-preview-stage {
+  display: grid;
+  place-items: center;
+  min-height: 160px;
+  overflow: auto;
+  border-radius: 8px;
+  // A faint checkerboard keeps transparent images legible on any theme.
+  background:
+    conic-gradient(color-mix(in srgb, var(--border) 55%, transparent) 25%, transparent 0 50%,
+      color-mix(in srgb, var(--border) 55%, transparent) 0 75%, transparent 0) 0 0 / 16px 16px;
+
+  img {
+    display: block;
+    max-width: 100%;
+    max-height: calc(100dvh - 200px);
+    object-fit: contain;
+  }
 }
 
 .bm-error {
