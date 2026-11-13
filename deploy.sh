@@ -49,14 +49,6 @@ ensure_env_setting() {
 ensure_env_setting APP_ORIGIN https://mindmap.adena.dev
 ensure_env_setting API_NODE_ENV production
 ensure_env_setting APP_PORT 6610
-ensure_env_setting MINDMAP_BIND 127.0.0.1
-ensure_env_setting MINDMAP_HOST_PORT 6610
-
-export APP_ORIGIN=https://mindmap.adena.dev
-export API_NODE_ENV=production
-export APP_PORT=6610
-export MINDMAP_BIND=127.0.0.1
-export MINDMAP_HOST_PORT=6610
 
 cd "$app_dir"
 

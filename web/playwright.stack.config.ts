@@ -1,6 +1,6 @@
 import { defineConfig, devices } from '@playwright/test';
 
-// Runs against an already running compose stack (see containers/accept.ps1); credentials come from the environment only.
+// Runs against an already running compose stack; the stack URL and credentials come from the environment only.
 export default defineConfig({
   testDir: './stack-e2e',
   outputDir: './test-results-stack',

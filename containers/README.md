@@ -1,25 +1,19 @@
 # Container deployment
 
-The application and public routing use separate Compose projects:
+One `docker compose` project runs the whole application. TLS is terminated by an external
+reverse proxy (Caddy) that forwards to the published port:
 
 ```text
-browser ──> Caddy (internal-routing) ──> nginx (mindmap) ──/api/──> API ──> PostgreSQL
-              └─ HTTP on port 80 redirects to HTTPS                          └──> RustFS (S3)
+browser ──HTTPS──> Caddy ──HTTP :6610──> nginx (mindmap) ──/api/──> API ──> PostgreSQL
+                                                                      └────> RustFS (S3)
 ```
 
-* The application Compose project runs nginx, the API, PostgreSQL and RustFS. Only nginx has a
-  host port; production binds it to loopback on `127.0.0.1:6610`.
-* The separate `internal-routing` Compose project runs Caddy and publishes ports 80 and 443
-  (TCP/UDP). Caddy handles HTTP-to-HTTPS redirects on port 80.
-* Both projects share the application Compose project's `routing` network; in the production
-  project (`containers`) its Docker network is named `containers_routing`. Caddy reaches nginx by
-  the service name `mindmap`. The API, PostgreSQL and RustFS have no published host ports.
-* The API is reached same-origin at `/api/` through nginx.
+* **nginx** serves the Angular build and proxies `/api/` to the API (the API does not serve
+  static files). It is the only service with a host port (`APP_PORT`, default `6610`); the API,
+  PostgreSQL and RustFS live on internal Docker networks with no host ports and no outbound access.
 * Startup order is enforced by health checks: PostgreSQL and RustFS healthy → one-shot
   `migrate` (schema migrations) and `storage-init` (idempotent bucket creation) succeed →
-  `api` healthy (`/api/health/ready`) → `mindmap` (nginx). Caddy runs independently.
-* Caddy manages the `mindmap.adena.dev` HTTPS certificate; its state is kept in the routing
-  project's named volumes.
+  `api` healthy (`/api/health/ready`) → `mindmap` (nginx).
 
 ## Required inputs
 
@@ -36,10 +30,9 @@ Copy-Item containers\.env.example containers\.env
 |---|---|---|
 | `POSTGRES_PASSWORD` | yes | PostgreSQL password (URL-safe characters only; it is embedded in the API's connection URL) |
 | `S3_ACCESS_KEY` / `S3_SECRET_KEY` | yes | RustFS root credentials, also used by the API (3+ / 8+ characters) |
-| `APP_PORT` | no, `6610` | Direct app port in development; production keeps the app on loopback port 6610 |
+| `APP_PORT` | no, `6610` | Published host port of the application (plain HTTP) |
 | `APP_ORIGIN` | no, `http://127.0.0.1:<APP_PORT>` | Exact browser origin the API accepts (scheme, host and port; no path) |
 | `API_NODE_ENV` | no, `development` | `production` requires an HTTPS `APP_ORIGIN`; `development` additionally allows plain HTTP on loopback |
-| `MINDMAP_BIND` / `MINDMAP_HOST_PORT` | no | nginx host bind address and port; production uses `127.0.0.1:6610` |
 | `S3_BUCKET` | no, `friendly-mindmap` | Private attachment bucket |
 
 If a required secret is missing, Compose stops before creating anything and names the
@@ -66,30 +59,21 @@ are repeatable. To run them alone: `docker compose -f containers/docker-compose.
 ### Production and TLS
 
 Set `APP_ORIGIN=https://mindmap.adena.dev` and `API_NODE_ENV=production`; the API then uses Secure
-cookies and rejects non-loopback HTTP. The application stack binds nginx to `127.0.0.1:6610`.
-The separate [routing Compose project](../internal-routing/containers/docker-compose.yaml) shares
-the app project's routing network (named `containers_routing` in production) and proxies
-`mindmap.adena.dev` to `mindmap:80`. It redirects HTTP on port 80 to HTTPS. Caddy's admin API is
-disabled, and the proxy removes upstream `Server` headers and sets a cosmetic custom value.
+cookies and rejects non-loopback HTTP. Run a TLS-terminating reverse proxy in front of the
+published port. With Caddy running on the same host (or LAN), this is the whole site block:
 
-Point `mindmap.adena.dev` DNS at the public IP. Forward TCP 80 and 443 from the internet-facing
-routers to this server; Caddy uses port 443 to obtain and renew its certificate and port 80 for
-HTTP redirects. The app's port 6610 is loopback-only and is not forwarded publicly.
-
-Start the application first so it creates the shared Docker network, then start the routing
-project:
-
-```bash
-docker compose -f containers/docker-compose.yaml up -d --build
-docker compose -f internal-routing/containers/docker-compose.yaml up -d
+```caddy
+mindmap.adena.dev {
+    reverse_proxy <server LAN IP>:6610
+}
 ```
 
-An existing service already publishing host ports 80 or 443 must be migrated or stopped before
-Caddy can bind those ports. Review its current routes and certificate volumes before replacing it.
-Do not forward arbitrary client `Origin` headers; the API requires the exact configured origin.
+Caddy forwards the client address and `X-Forwarded-Proto`; nginx passes both to the API (which
+trusts them) and the API requires the exact `APP_ORIGIN`. Point DNS at the public IP and forward
+TCP 80 and 443 to the proxy host (443 for traffic and certificates, 80 for the HTTP redirect).
+**Never forward `APP_PORT` publicly**: it is plain HTTP and must stay on the LAN.
 
-A local development `docker compose up` without the routing project continues to serve the app
-directly on `APP_PORT`.
+A local `docker compose up` without a proxy serves the app directly on `APP_PORT`.
 
 ### Deploying or updating on Debian
 
@@ -101,13 +85,11 @@ bash ~/projects/friendly-mindmap/deploy.sh
 
 The target is `~/projects/friendly-mindmap`. If it is absent or empty, the script clones `main`.
 If `containers/.env` is missing, it copies `.env.example` there and exits; configure the database
-and storage secrets before running it again. It adds the production API origin and loopback nginx
-binding when absent. Each deployment requires a clean `main` checkout, fast-forwards it from
-`origin/main`, rebuilds the application images, and starts the application stack. Start or update
-the separate routing project with its Compose file after the application has created the shared
-network. Existing conflicting production settings must be corrected in `.env` before the script
-proceeds. It does not create backups; take a verified backup before deploying updates. Compose
-runs migrations and storage initialization as part of startup.
+and storage secrets before running it again. It adds the production `APP_ORIGIN`, `API_NODE_ENV`
+and `APP_PORT` when absent and fails if they conflict. Each deployment requires a clean `main`
+checkout, fast-forwards it from `origin/main`, rebuilds the images and starts the stack. It does
+not create backups; take one before deploying updates. Compose runs migrations and storage
+initialization as part of startup.
 
 ## Development admin bootstrap (explicit, opt-in)
 
@@ -159,36 +141,42 @@ Never use `down -v` or `docker volume rm` unless you hold a verified backup. Nor
 
 ## Backup and restore
 
-A coherent backup needs the database and the attachment objects to describe the same moment.
-`containers\backup.ps1` stops the application and API (no writes, uploads or cleanup), dumps
-PostgreSQL in custom format, stops RustFS and archives its data volume, writes `SHA256SUMS`,
-then restarts the stack:
+A coherent backup needs the database and the attachment objects to describe the same moment, so
+stop the writers first. Run from the repository root on the Debian host (Compose project
+`containers`, hence the `containers_*` volume names):
 
-```powershell
-.\containers\backup.ps1 -OutDir D:\backups\mindmap-2026-01-01
-# other projects/env files: -Project <name> -EnvFile <path>
+```bash
+dc="docker compose -f containers/docker-compose.yaml"
+out=~/backups/mindmap-$(date +%F); mkdir -p "$out"
+
+$dc stop mindmap api                       # no writes, uploads or cleanup
+$dc exec -T postgres pg_dump -U mindmap -d mindmap -Fc > "$out/postgres.dump"
+$dc stop rustfs
+docker run --rm -v containers_rustfs-data:/data:ro -v "$out":/backup alpine \
+  tar czf /backup/rustfs-data.tgz -C /data .
+$dc start rustfs api mindmap
 ```
 
-The backup directory contains all user data (but no secrets): store and protect it. Keep a copy of
-`containers\.env` in a secret store; restore does not need the *same* secrets (the target stack uses
-its own), but the RustFS archive requires the same pinned RustFS image, which Compose uses.
+The backup contains all user data (but no secrets): store and protect it, and keep a copy of
+`containers/.env` in a secret store. The RustFS archive requires the same pinned RustFS image,
+which Compose uses.
 
-Restore into an empty stack (a new machine, or an isolated project beside a running one):
+Restore into a fresh stack (new host, or after `down -v` on a test system):
 
-```powershell
-# separate env file, port and project so nothing existing is touched
-.\containers\restore.ps1 -BackupDir D:\backups\mindmap-2026-01-01 -Project mindmap-restore -EnvFile D:\secrets\restore.env
+```bash
+dc="docker compose -f containers/docker-compose.yaml"
+out=~/backups/mindmap-2026-01-01           # the backup directory
+
+$dc create postgres rustfs                 # creates empty volumes
+$dc up -d --wait postgres
+$dc exec -T postgres pg_restore -U mindmap -d mindmap --clean --if-exists --no-owner \
+  --single-transaction --exit-on-error < "$out/postgres.dump"
+docker run --rm -v containers_rustfs-data:/data -v "$out":/backup alpine \
+  tar xzf /backup/rustfs-data.tgz -C /data
+$dc up -d --build                          # repeatable migrations find the schema current
 ```
 
-It verifies checksums, builds the API image, restores the dump (`pg_restore --single-transaction`)
-and the RustFS volume while storage and API are stopped, then starts everything (repeatable
-migrations find the schema current). It refuses to overwrite a non-empty database unless `-Force`
-is passed. Afterwards sign in and check a board, its history and an attachment; remove an
-isolated verification project with `docker compose -p mindmap-restore ... down -v`.
-
-Manual equivalent (any shell): stop `mindmap` and `api`; `pg_dump -U mindmap -d mindmap -Fc` inside the
-`postgres` container; stop `rustfs`; `tar` the `rustfs-data` volume from a throwaway container;
-restart. Restore reverses it into freshly created volumes with `pg_restore --clean --if-exists`.
+Afterwards sign in and check a board, its history and an attachment.
 
 ## Transfers and limits
 

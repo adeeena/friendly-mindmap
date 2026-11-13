@@ -1,5 +1,5 @@
 # Complete application stack: nginx (frontend + API proxy) -> API -> PostgreSQL + RustFS.
-# Public TLS and routing live in the separate internal-routing Compose project.
+# TLS is terminated by an external reverse proxy that forwards to the published port.
 # Required secrets come from containers/.env or the shell.
 # The API image is built once by the `api` service; the one-shot and tool services reuse it.
 
@@ -32,19 +32,13 @@ services:
       context: ..
       dockerfile: containers/Dockerfile
     ports:
-      - "${MINDMAP_BIND:-0.0.0.0}:${MINDMAP_HOST_PORT:-${APP_PORT:-6610}}:80"
+      - "${APP_PORT:-6610}:80"
     networks:
-      - routing
+      - edge
       - proxy
     depends_on:
       api:
         condition: service_healthy
-    healthcheck:
-      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:80/"]
-      interval: 15s
-      timeout: 5s
-      retries: 5
-      start_period: 5s
     restart: unless-stopped
 
   api:
@@ -59,7 +53,7 @@ services:
       APP_ORIGIN: ${APP_ORIGIN:-http://127.0.0.1:${APP_PORT:-6610}}
       HOST: 0.0.0.0
       PORT: "3000"
-      # nginx is the web ingress and forwards Caddy's client address to the API.
+      # Only nginx reaches the API and it forwards the reverse proxy's client address.
       TRUST_PROXY: "true"
     networks:
       - proxy
@@ -178,9 +172,8 @@ services:
     restart: "no"
 
 networks:
-  # Shared with the separate internal-routing Caddy project.
-  routing:
-    name: ${COMPOSE_PROJECT_NAME:-containers}_routing
+  # Regular network so nginx can publish its host port; the other networks are private.
+  edge: {}
   # Private networks: no egress and no host exposure.
   proxy:
     internal: true
