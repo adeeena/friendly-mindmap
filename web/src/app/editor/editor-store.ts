@@ -34,7 +34,7 @@ import {
   visibleNodeIds,
 } from '../layout/layout';
 import { GuideLine, snapValue } from './geometry';
-import { centerOn, fitBounds, zoomAt } from './camera';
+import { centerOn, clampZoom, fitBounds, zoomAt } from './camera';
 
 export type ToolId = 'pointer' | 'hand' | 'node' | 'connect';
 export type EdgeRef = { type: 'hierarchy'; childId: NodeId } | { type: 'link'; id: string };
@@ -53,6 +53,7 @@ export const newTxn = (prefix: string) => `${prefix}-${++txnCounter}`;
 export class EditorStore {
   private readonly announcer = inject(LiveAnnouncer);
   private history = new History<BoardDoc>();
+  private readonly documentListeners = new Set<() => void>();
 
   // ---- document (persisted, undoable) ----
   readonly doc = signal<BoardDoc>(createBoard());
@@ -88,7 +89,6 @@ export class EditorStore {
   readonly dragPreview = signal<{ ids: NodeId[]; dx: number; dy: number } | null>(null);
   readonly dropTarget = signal<DropTarget | null>(null);
   /** True while the current board's name is being edited in the toolbar. */
-  readonly boardRenaming = signal(false);
   readonly notesOpen = signal(false);
   readonly marquee = signal<Rect | null>(null);
   readonly guides = signal<GuideLine[]>([]);
@@ -151,11 +151,13 @@ export class EditorStore {
     return ids.length ? ids[ids.length - 1] : null;
   });
 
-  /** The selection toolbar and emoji bar show only while nodes are selected and nothing else owns the pointer. */
-  readonly selectionBarVisible = computed(() => {
-    if (!this.selectedIds().length || this.editingId() || this.dragging() || this.readOnly()) return false;
+  /** The selection actions stay available while editing the selected node. */
+  readonly selectionToolbarVisible = computed(() => {
+    if (!this.selectedIds().length || this.dragging() || this.readOnly()) return false;
     return this.tool() === 'pointer' && !this.marquee();
   });
+  /** Quick emoji suggestions stay out of the way while the text editor is active. */
+  readonly selectionBarVisible = computed(() => this.selectionToolbarVisible() && !this.editingId());
   /** Emoji picker popover next to the emoji bar. */
   readonly emojiPicker = signal(false);
 
@@ -184,6 +186,12 @@ export class EditorStore {
       this.selectedEdge.set(null);
       this.edgeMenu.set(null);
     }
+    this.documentListeners.forEach((listener) => listener());
+  }
+
+  onDocumentChange(listener: () => void): () => void {
+    this.documentListeners.add(listener);
+    return () => this.documentListeners.delete(listener);
   }
 
   sealHistory(): void {
@@ -214,7 +222,13 @@ export class EditorStore {
     this.tagFilter.set([]);
     this.readOnly.set(readOnly);
     this.doc.set(stored.doc);
-    this.camera.set(stored.camera);
+    const zoom = clampZoom(stored.camera.zoom);
+    const vp = this.viewport();
+    this.camera.set(
+      zoom === stored.camera.zoom
+        ? stored.camera
+        : zoomAt(stored.camera, zoom, { x: vp.w / 2, y: vp.h / 2 }),
+    );
     this.canUndo.set(false);
     this.canRedo.set(false);
   }
@@ -224,6 +238,7 @@ export class EditorStore {
     const doc = this.doc();
     this.doc.set({ ...doc, name });
     this.docVersion.update((v) => v + 1);
+    this.documentListeners.forEach((listener) => listener());
   }
 
   announce(message: string): void {

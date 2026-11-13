@@ -1,8 +1,12 @@
-import { ChangeDetectionStrategy, Component, afterNextRender, input, signal } from '@angular/core';
+import { ChangeDetectionStrategy, Component, DestroyRef, afterNextRender, inject, input, signal } from '@angular/core';
 import { ChecklistData, checklistOf, checklistProgress } from '../io/checklist-export';
 import { t } from '../i18n';
+import { AccountBoardCache } from '../persistence/account-cache';
+import { AuthClient } from '../persistence/auth-client';
+import { BoardRepository } from '../persistence/board-repository';
 import { IndexedDbBoardRepository } from '../persistence/indexeddb-repository';
 import { migrateBoard } from '../persistence/migrations';
+import { WorkspaceAuthState } from '../persistence/workspace-auth-state';
 
 @Component({
   selector: 'bm-checklist-print',
@@ -42,23 +46,65 @@ export class ChecklistPrint {
   protected readonly t = t;
   readonly boardId = input.required<string>();
   readonly nodeId = input.required<string>();
+  /** Workspace that opened this print view: `guest` or an account id. */
+  readonly w = input<string>('guest');
   protected readonly data = signal<ChecklistData | null>(null);
   protected readonly error = signal<string | null>(null);
+  private readonly authState = new WorkspaceAuthState(localStorage);
+  private readonly auth = inject(AuthClient);
+  private accountId: string | null = null;
 
   constructor() {
     afterNextRender(() => void this.load());
+    const onStorage = (event: StorageEvent) => {
+      try {
+        if (this.accountId && this.authState.isLockEvent(event, this.accountId) && this.authState.locked(this.accountId)) this.lock();
+      } catch { this.lock(); }
+    };
+    window.addEventListener('storage', onStorage);
+    inject(DestroyRef).onDestroy(() => window.removeEventListener('storage', onStorage));
+  }
+
+  private lock(): void {
+    this.data.set(null);
+    this.error.set(t('print.locked'));
+  }
+
+  /** A private checklist is shown only for the unlocked account that opened it; guest checklists never need an account. */
+  private async repository(): Promise<(BoardRepository & { close?(): Promise<void> }) | null> {
+    const workspace = this.w();
+    if (workspace === 'guest') return new IndexedDbBoardRepository();
+    const account = this.authState.account();
+    if (!account || account.id.toLowerCase() !== workspace.toLowerCase() || this.authState.locked(account.id)) return null;
+    try {
+      const session = await this.auth.current(AbortSignal.timeout(15_000));
+      if (!session || session.account.id.toLowerCase() !== account.id.toLowerCase()) {
+        // Same rule as the editor: an ended or different server session locks the cached account.
+        this.authState.lock(account.id);
+        return null;
+      }
+    } catch { /* offline: the unlocked cached account stays usable but unverified */ }
+    if (this.authState.locked(account.id)) return null;
+    this.accountId = account.id;
+    return new AccountBoardCache(account.id, account.role);
   }
 
   private async load(): Promise<void> {
+    let repository: Awaited<ReturnType<ChecklistPrint['repository']>> = null;
     try {
-      const rec = await new IndexedDbBoardRepository().load(this.boardId());
+      repository = await this.repository();
+      if (!repository) { this.lock(); return; }
+      const rec = await repository.load(this.boardId());
       const c = rec ? checklistOf(migrateBoard(rec).doc, this.nodeId()) : null;
       if (!c) throw new Error();
+      if (this.accountId && this.authState.locked(this.accountId)) { this.lock(); return; }
       this.data.set(c);
       document.title = t('print.title', { title: c.title });
-      setTimeout(() => window.print(), 300);
+      setTimeout(() => { if (this.data()) window.print(); }, 300);
     } catch {
       this.error.set(t('print.notFound'));
+    } finally {
+      await repository?.close?.();
     }
   }
 
@@ -68,6 +114,9 @@ export class ChecklistPrint {
   }
 
   protected print(): void {
+    try {
+      if (this.accountId && this.authState.locked(this.accountId)) { this.lock(); return; }
+    } catch { this.lock(); return; }
     window.print();
   }
 }

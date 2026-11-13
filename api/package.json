@@ -1,0 +1,29 @@
+{
+  "name": "friendly-mindmap-api",
+  "version": "1.0.0",
+  "private": true,
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "start": "node dist/api/src/main.js",
+    "migrate": "node dist/api/src/migrate.js",
+    "bootstrap": "node dist/api/src/accounts-cli.js bootstrap",
+    "password": "node dist/api/src/accounts-cli.js password",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "npm run build && node --test --test-concurrency=2 dist/api/test/*.test.js"
+  },
+  "dependencies": {
+    "@aws-sdk/client-s3": "^3.922.0",
+    "@fastify/cookie": "^11.0.2",
+    "argon2": "^0.44.0",
+    "fastify": "^5.6.2",
+    "pg": "^8.16.3"
+  },
+  "devDependencies": {
+    "@types/node": "^22.19.0",
+    "@types/pg": "^8.15.6",
+    "typescript": "~5.9.2"
+  }
+}

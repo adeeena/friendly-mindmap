@@ -5,12 +5,16 @@
   <title>Friendly Mindmap</title>
   <base href="/">
   <meta name="viewport" content="width=device-width, initial-scale=1">
+  <link rel="icon" type="image/svg+xml" href="favicon.svg">
   <link rel="icon" type="image/x-icon" href="favicon.ico">
   <script>
-    // Apply a saved Light/Dark choice before first paint; System relies on the CSS media query.
+    // Apply the remembered theme before first paint; System relies on the CSS media query.
     try {
+      var themes = ['light', 'dark', 'pale-rose'];
+      var painted = localStorage.getItem('friendly-mindmap.paint-theme');
       var saved = JSON.parse(localStorage.getItem('friendly-mindmap.settings') || '{}');
-      if (saved.theme === 'light' || saved.theme === 'dark') document.documentElement.dataset.theme = saved.theme;
+      var choice = painted || saved.theme;
+      if (themes.indexOf(choice) !== -1) document.documentElement.dataset.theme = choice;
     } catch (e) {}
   </script>
 </head>

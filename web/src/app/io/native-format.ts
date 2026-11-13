@@ -36,24 +36,33 @@ export function toNativeJson(doc: BoardDoc, camera: Camera): string {
   return JSON.stringify(file, null, 2);
 }
 
+export class MissingAttachmentsError extends Error {
+  constructor(readonly names: string[]) {
+    super('Attachment bytes are unavailable: ' + names.join(', '));
+  }
+}
+
 export async function toNativeZip(
   doc: BoardDoc,
   camera: Camera,
-  getBlob: (id: string) => Promise<Blob | null>,
+  getBlob: (meta: AttachmentMeta) => Promise<Blob | null>,
 ): Promise<Uint8Array> {
   const entries: Record<string, Uint8Array> = {};
   const metas = allAttachments(doc);
   const withPaths: NativeFile['attachments'] = [];
+  const missing: string[] = [];
   for (const m of metas) {
-    const blob = await getBlob(m.id);
+    const blob = await getBlob(m);
     if (!blob) {
-      withPaths.push(m);
+      missing.push(m.name);
       continue;
     }
     const path = `attachments/${m.id}`;
     entries[path] = new Uint8Array(await blob.arrayBuffer());
     withPaths.push({ ...m, path });
   }
+  // A bundle without some of its files would silently lose data, so refuse to produce it.
+  if (missing.length) throw new MissingAttachmentsError(missing);
   const file: NativeFile = {
     format: NATIVE_FORMAT,
     schemaVersion: SCHEMA_VERSION,

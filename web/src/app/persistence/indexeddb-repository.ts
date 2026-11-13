@@ -1,6 +1,10 @@
 import { DBSchema, IDBPDatabase, openDB } from 'idb';
 import { AttachmentMeta, BoardSummary } from '../core/model';
-import { BoardRecord, BoardRepository, RevisionConflictError } from './board-repository';
+import {
+  AttachmentWriteContext, BoardRecord, BoardRepository, BoardSaveResult, RevisionConflictError,
+  WorkspaceIdentity, assertAttachmentWrite,
+} from './board-repository';
+import { AttachmentRole } from '../../../../shared/attachment-policy';
 
 interface AttachmentRecord {
   boardId: string;
@@ -19,6 +23,9 @@ interface MindmapDb extends DBSchema {
 export const DB_NAME = 'better-mindmap';
 
 export class IndexedDbBoardRepository implements BoardRepository {
+  readonly localDurability = 'persistent' as const;
+  readonly workspace: WorkspaceIdentity = { kind: 'guest' };
+  readonly attachmentRole: AttachmentRole = 'guest';
   private dbPromise: Promise<IDBPDatabase<MindmapDb>> | null = null;
 
   constructor(private readonly dbName = DB_NAME) {}
@@ -46,19 +53,19 @@ export class IndexedDbBoardRepository implements BoardRepository {
     return (await (await this.db()).get('boards', id)) ?? null;
   }
 
-  async save(record: Omit<BoardRecord, 'revision'>, expectedRevision: number | null): Promise<{ revision: number }> {
+  async save(record: Omit<BoardRecord, 'revision'>, expectedRevision: number | null): Promise<BoardSaveResult> {
     const db = await this.db();
     const tx = db.transaction('boards', 'readwrite');
     const current = await tx.store.get(record.id);
-    if (current && expectedRevision !== null && current.revision > expectedRevision) {
+    if (current ? expectedRevision !== current.revision : expectedRevision !== null) {
       tx.abort();
       await tx.done.catch(() => undefined);
-      throw new RevisionConflictError(current.revision);
+      throw new RevisionConflictError(current?.revision ?? 0);
     }
     const revision = (current?.revision ?? 0) + 1;
     await tx.store.put({ ...record, revision });
     await tx.done;
-    return { revision };
+    return { revision, localDurability: 'persistent', cloud: { status: 'not-applicable' } };
   }
 
   async delete(id: string): Promise<void> {
@@ -70,7 +77,8 @@ export class IndexedDbBoardRepository implements BoardRepository {
     await tx.done;
   }
 
-  async putAttachment(boardId: string, meta: AttachmentMeta, blob: Blob): Promise<void> {
+  async putAttachment(boardId: string, meta: AttachmentMeta, blob: Blob, context: AttachmentWriteContext): Promise<void> {
+    assertAttachmentWrite(this.attachmentRole, meta, blob, context);
     const data = await blob.arrayBuffer();
     await (await this.db()).put('attachments', { boardId, id: meta.id, meta, data });
   }

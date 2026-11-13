@@ -20,6 +20,17 @@ test('zoom keeps the point under the cursor fixed', async ({ page, isMobile }) =
   expect(Math.abs(after.y + after.height / 2 - cy)).toBeLessThan(3);
 });
 
+test('zoom shortcuts scale the canvas without changing the browser viewport', async ({ page, isMobile }) => {
+  test.skip(isMobile, 'desktop zoom shortcuts');
+  const width = await page.evaluate(() => window.innerWidth);
+  const zoom = page.getByRole('button', { name: 'Reset zoom to 100%' });
+  await page.keyboard.press(`${MOD}+=`);
+  await expect(zoom).toHaveText(/120%/);
+  expect(await page.evaluate(() => window.innerWidth)).toBe(width);
+  await page.keyboard.press(`${MOD}+0`);
+  await expect(zoom).toHaveText(/100%/);
+});
+
 test('marquee selects only fully enclosed nodes', async ({ page, isMobile }) => {
   test.skip(isMobile, 'mouse marquee');
   await addRoot(page, 120, 150, 'Inside');

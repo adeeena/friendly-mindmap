@@ -4,7 +4,7 @@ import { node } from './helpers';
 
 const SETTINGS_KEY = 'friendly-mindmap.settings';
 const LANGUAGES = ['en', 'fr', 'hu'] as const;
-const THEMES = ['light', 'dark'] as const;
+const THEMES = ['light', 'dark', 'pale-rose'] as const;
 const SETTINGS_LABEL: Record<(typeof LANGUAGES)[number], string> = {
   en: 'Settings',
   fr: 'Paramètres',
@@ -116,4 +116,70 @@ for (const theme of THEMES) {
     await dialog.getByRole('button', { name: 'Add' }).click();
     await expect(dialog.getByRole('button', { name: 'Tag color: Navy' })).toBeVisible();
   });
+}
+
+for (const theme of THEMES) {
+  for (const width of [1280, 375] as const) {
+    test(`AXE: notes panel, settings and anchored overlays in ${theme} at ${width}px`, async ({ page, browserName, isMobile }) => {
+      test.skip(browserName !== 'chromium' || isMobile, 'viewport and overlay geometry are verified on desktop Chromium');
+      await page.setViewportSize({ width, height: width === 375 ? 700 : 800 });
+      await openIn(page, 'en', theme);
+      await page.keyboard.press('n');
+      const vp = (await page.locator('.bm-viewport').boundingBox())!;
+      await page.mouse.click(vp.x + 100, vp.y + 160);
+      await page.keyboard.type('Notes node');
+      await page.keyboard.press('Escape');
+      await page.getByRole('toolbar', { name: 'Selection' }).getByRole('button', { name: 'Notes and attachments' }).click();
+      await expect(page.locator('bm-notes-panel')).toBeVisible();
+      await expectNoViolations(page);
+      await page.getByRole('button', { name: 'Close notes', exact: true }).click();
+      await page.locator('[data-view-control="minimap"]').click();
+      await expect(page.locator('bm-minimap')).toBeVisible();
+      await expectNoViolations(page);
+      await page.locator('[data-view-control="tags"]').click();
+      await expect(page.getByRole('dialog')).toBeVisible();
+      await expectNoViolations(page);
+      expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+      await page.keyboard.press('Escape');
+      await page.getByRole('button', { name: 'Settings', exact: true }).click();
+      await expectNoViolations(page);
+    });
+  }
+}
+
+for (const language of LANGUAGES) {
+  for (const theme of THEMES) {
+    test(`AXE: save toast, boards, export, login and tag popover in ${language} / ${theme}`, async ({ page, browserName, isMobile }) => {
+      test.skip(browserName !== 'chromium' || isMobile, 'the surface sweep runs on desktop Chromium');
+      await openIn(page, language, theme);
+      await page.keyboard.press('n');
+      const vp = (await page.locator('.bm-viewport').boundingBox())!;
+      await page.mouse.click(vp.x + 160, vp.y + 160);
+      await page.keyboard.type('Surface');
+      await page.keyboard.press('Escape');
+      await page.keyboard.press('ControlOrMeta+s');
+      await expect(page.locator('.bm-toast')).toBeVisible();
+      await expectNoViolations(page);
+      await page.locator('button.bm-board-btn').click();
+      await expect(page.locator('bm-board-switcher, [role="dialog"]').first()).toBeVisible();
+      await expectNoViolations(page);
+      await page.keyboard.press('Escape');
+
+      await page.locator('[data-command="export.open"]').click();
+      await expect(page.getByRole('dialog')).toBeVisible();
+      await expectNoViolations(page);
+      await page.keyboard.press('Escape');
+
+      await page.locator('bm-account-actions button').first().click();
+      await expect(page.getByRole('dialog')).toBeVisible();
+      await expectNoViolations(page);
+      await page.keyboard.press('Escape');
+
+      await page.locator('[data-view-control="tags"]').click();
+      await expect(page.getByRole('dialog')).toBeVisible();
+      await expectNoViolations(page);
+      await page.keyboard.press('Escape');
+      await expect(page.locator('[data-view-control="tags"]')).toBeFocused();
+    });
+  }
 }

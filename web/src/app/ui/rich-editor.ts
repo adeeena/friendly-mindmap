@@ -30,7 +30,6 @@ export function richExtensions() {
       listKeymap: false,
       orderedList: false,
       strike: false,
-      underline: false,
       trailingNode: false,
       link: {
         openOnClick: false,
@@ -53,6 +52,32 @@ let linkCounter = 0;
   changeDetection: ChangeDetectionStrategy.OnPush,
   host: { class: 'bm-rich-editor' },
   template: `
+    <div class="bm-rich-toolbar" role="toolbar" [attr.aria-label]="t('rich.formatting')">
+      <button
+        type="button"
+        class="bm-button bm-rich-format"
+        [attr.aria-label]="t('rich.bold')"
+        [attr.aria-pressed]="activeMarks().bold"
+        (pointerdown)="$event.preventDefault()"
+        (click)="toggleMark('bold')"
+      ><span class="bm-rich-bold">B</span></button>
+      <button
+        type="button"
+        class="bm-button bm-rich-format"
+        [attr.aria-label]="t('rich.italic')"
+        [attr.aria-pressed]="activeMarks().italic"
+        (pointerdown)="$event.preventDefault()"
+        (click)="toggleMark('italic')"
+      ><span class="bm-rich-italic">I</span></button>
+      <button
+        type="button"
+        class="bm-button bm-rich-format"
+        [attr.aria-label]="t('rich.underline')"
+        [attr.aria-pressed]="activeMarks().underline"
+        (pointerdown)="$event.preventDefault()"
+        (click)="toggleMark('underline')"
+      ><span class="bm-rich-underline">U</span></button>
+    </div>
     @if (linkOpen()) {
       <form class="bm-link-form bm-panel" (submit)="applyLink($event)">
         <label class="visually-hidden" [attr.for]="linkId">{{ t('rich.linkUrl') }}</label>
@@ -88,6 +113,7 @@ export class RichEditor implements OnDestroy {
   protected readonly linkOpen = signal(false);
   protected readonly linkValue = signal('');
   protected readonly linkError = signal(false);
+  protected readonly activeMarks = signal({ bold: false, italic: false, underline: false });
   protected readonly linkId = `bm-link-${++linkCounter}`;
   editor: Editor | null = null;
 
@@ -95,7 +121,7 @@ export class RichEditor implements OnDestroy {
     afterNextRender(() => {
       const mount = document.createElement('div');
       mount.className = 'bm-rich-mount';
-      this.host.nativeElement.prepend(mount);
+      this.host.nativeElement.append(mount);
       this.editor = new Editor({
         element: mount,
         extensions: richExtensions(),
@@ -114,6 +140,8 @@ export class RichEditor implements OnDestroy {
           },
         },
         onUpdate: ({ editor }) => this.changed.emit(sanitizeRichDoc(editor.getJSON())),
+        onSelectionUpdate: ({ editor }) => this.syncActiveMarks(editor),
+        onTransaction: ({ editor }) => this.syncActiveMarks(editor),
         onBlur: ({ event }) => {
           const next = event.relatedTarget as Node | null;
           if (next && this.host.nativeElement.contains(next)) return;
@@ -127,7 +155,20 @@ export class RichEditor implements OnDestroy {
         if (mode === 'end') this.editor.commands.setTextSelection(this.editor.state.doc.content.size);
         else this.editor.commands.selectAll();
       }
+      this.syncActiveMarks(this.editor);
       this.ready.emit(this.editor);
+    });
+  }
+
+  protected toggleMark(mark: 'bold' | 'italic' | 'underline'): void {
+    this.editor?.chain().focus().toggleMark(mark).run();
+  }
+
+  private syncActiveMarks(editor: Editor): void {
+    this.activeMarks.set({
+      bold: editor.isActive('bold'),
+      italic: editor.isActive('italic'),
+      underline: editor.isActive('underline'),
     });
   }
 

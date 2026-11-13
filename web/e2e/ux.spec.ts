@@ -5,6 +5,59 @@ test.beforeEach(async ({ page }) => openApp(page));
 
 const SETTINGS_KEY = 'friendly-mindmap.settings';
 
+test('uses the self-hosted Fira Sans font throughout the app', async ({ page }) => {
+  const fontState = await page.evaluate(async () => {
+    await document.fonts.ready;
+    return {
+      body: getComputedStyle(document.body).fontFamily,
+      button: getComputedStyle(document.querySelector('button')!).fontFamily,
+      loaded: document.fonts.check('400 14px "Fira Sans"'),
+    };
+  });
+
+  expect(fontState.body).toMatch(/^"?Fira Sans"?,/);
+  expect(fontState.button).toMatch(/^"?Fira Sans"?,/);
+  expect(fontState.loaded).toBe(true);
+});
+
+test('update reload action stays clickable beside the account controls', async ({ page }) => {
+  await page.evaluate(() => {
+    const banners = document.createElement('div');
+    banners.className = 'bm-banners';
+    const banner = document.createElement('div');
+    banner.className = 'bm-banner';
+    banner.setAttribute('role', 'status');
+    const message = document.createElement('span');
+    message.textContent = 'An application update is ready. Save local work and reload to update.';
+    const button = document.createElement('button');
+    button.className = 'bm-button';
+    button.textContent = 'Save and reload';
+    button.dataset.testUpdateReload = 'true';
+    button.addEventListener('click', () => { document.body.dataset.updateReloaded = 'true'; });
+    banner.append(message, button);
+    banners.append(banner);
+    document.querySelector('.bm-main')?.prepend(banners);
+  });
+
+  const reload = page.locator('[data-test-update-reload]');
+  const box = await reload.boundingBox();
+  expect(box).not.toBeNull();
+  const receivesPointer = await page.evaluate(({ x, y }) => {
+    return Boolean(document.elementFromPoint(x, y)?.closest('[data-test-update-reload]'));
+  }, { x: box!.x + box!.width / 2, y: box!.y + box!.height / 2 });
+  expect(receivesPointer).toBe(true);
+  await reload.click();
+  await expect(page.locator('body')).toHaveAttribute('data-update-reloaded', 'true');
+
+  const accountButton = page.locator('.bm-account-corner button').first();
+  const accountBox = await accountButton.boundingBox();
+  expect(accountBox).not.toBeNull();
+  const accountReceivesPointer = await page.evaluate(({ x, y }) => {
+    return Boolean(document.elementFromPoint(x, y)?.closest('.bm-account-corner button'));
+  }, { x: accountBox!.x + accountBox!.width / 2, y: accountBox!.y + accountBox!.height / 2 });
+  expect(accountReceivesPointer).toBe(true);
+});
+
 /** Parent -> Child (created with Tab), parent at the top-left of the canvas. */
 async function parentWithChild(page: Page): Promise<void> {
   await addRoot(page, 120, 120, 'Parent');
@@ -169,26 +222,76 @@ test.describe('line style', () => {
   });
 });
 
-test.describe('board rename', () => {
-  test('Save and Load are in the boards dialog, not the toolbar', async ({ page }) => {
-    await expect(page.getByRole('button', { name: 'Save to file' })).toHaveCount(0);
-    await expect(page.getByRole('button', { name: 'Load from file' })).toHaveCount(0);
+test.describe('Boards and compact controls', () => {
+  test('save, export and import actions are in Boards rather than the toolbar', async ({ page }) => {
+    const toolbar = page.getByRole('toolbar', { name: 'Editor tools' });
+    await expect(toolbar.getByRole('button', { name: 'Save', exact: true })).toHaveCount(0);
+    await expect(toolbar.getByRole('button', { name: 'Load', exact: true })).toHaveCount(0);
 
-    await page.getByRole('button', { name: /^Boards\./ }).click();
+    await page.getByRole('button', { name: /^Open boards\./ }).click();
     const dialog = page.getByRole('dialog', { name: 'Boards' });
+    await expect(dialog.getByRole('button', { name: 'Save changes', exact: true })).toBeVisible();
     const download = page.waitForEvent('download');
-    await dialog.getByRole('button', { name: 'Save to file' }).click();
+    await dialog.getByRole('button', { name: 'Export board…' }).click();
     expect((await download).suggestedFilename()).toMatch(/\.bmm\.json$/);
     await expect(dialog).toHaveCount(0);
 
-    await page.getByRole('button', { name: /^Boards\./ }).click();
+    await page.getByRole('button', { name: /^Open boards\./ }).click();
     const chooser = page.waitForEvent('filechooser');
-    await page.getByRole('dialog', { name: 'Boards' }).getByRole('button', { name: 'Load from file' }).click();
+    await page.getByRole('dialog', { name: 'Boards' }).getByRole('button', { name: 'Import board…' }).click();
     expect(await chooser).toBeTruthy();
+
+    await page.getByRole('button', { name: /^Open boards\./ }).click();
+    const saveDialog = page.getByRole('dialog', { name: 'Boards' });
+    await saveDialog.getByRole('button', { name: 'Save changes', exact: true }).click();
+    await expect(saveDialog).toHaveCount(0);
+  });
+
+  test('compact controls remain on the left rail with Log in at the far right', async ({ page, isMobile }) => {
+    test.skip(!isMobile, 'compact layout');
+    await page.setViewportSize({ width: 320, height: 720 });
+    const toolbar = page.getByRole('toolbar', { name: 'Editor tools' });
+    const toolbarBox = await toolbar.boundingBox();
+    const login = page.getByRole('button', { name: 'Log in', exact: true });
+    const loginBox = await login.boundingBox();
+    const tools = page.locator('.bm-account-tools');
+    const boards = tools.getByRole('button', { name: /^Open boards\./ });
+    const exportButton = tools.getByRole('button', { name: 'Export' });
+    const settingsButton = tools.getByRole('button', { name: 'Settings' });
+    const boardsBox = await boards.boundingBox();
+    const exportBox = await exportButton.boundingBox();
+    const settingsBox = await settingsButton.boundingBox();
+    expect(toolbarBox).not.toBeNull();
+    expect(toolbarBox!.x).toBeLessThan(12);
+    expect(toolbarBox!.height).toBeGreaterThan(toolbarBox!.width);
+    expect(loginBox).not.toBeNull();
+    expect(boardsBox).not.toBeNull();
+    expect(exportBox).not.toBeNull();
+    expect(settingsBox).not.toBeNull();
+    expect(boardsBox!.x + boardsBox!.width).toBeLessThanOrEqual(exportBox!.x + 1);
+    expect(exportBox!.x + exportBox!.width).toBeLessThanOrEqual(settingsBox!.x + 1);
+    expect(settingsBox!.x + settingsBox!.width).toBeLessThanOrEqual(loginBox!.x + 1);
+    await expect(boards).toHaveAttribute('aria-label', /^Open boards\./);
+    await boards.click();
+
+    const dialog = page.getByRole('dialog', { name: 'Boards' });
+    const dialogBox = await dialog.boundingBox();
+    const viewport = page.viewportSize()!;
+    expect(dialogBox).not.toBeNull();
+    expect(dialogBox!.x).toBeGreaterThanOrEqual(8);
+    expect(dialogBox!.x + dialogBox!.width).toBeLessThanOrEqual(viewport.width - 8);
+    const sections = await dialog.locator('.bm-bd-head, .bm-bd-new, .bm-bd-list, .bm-bd-foot').evaluateAll((els) =>
+      els.map((el) => {
+        const rect = el.getBoundingClientRect();
+        return { left: rect.left, right: rect.right };
+      }),
+    );
+    expect(sections.length).toBe(4);
+    expect(sections.every((section) => section.left >= dialogBox!.x && section.right <= dialogBox!.x + dialogBox!.width)).toBe(true);
   });
 
   test('rename from the boards list updates the name in place', async ({ page }) => {
-    await page.getByRole('button', { name: /^Boards\./ }).click();
+    await page.getByRole('button', { name: /^Open boards\./ }).click();
     const dialog = page.getByRole('dialog', { name: 'Boards' });
     await dialog.getByRole('button', { name: 'Rename Untitled board' }).click();
     const field = dialog.getByRole('textbox', { name: 'Board name', exact: true });
@@ -202,7 +305,7 @@ test.describe('board rename', () => {
   });
 
   test('cancel button leaves the name unchanged', async ({ page }) => {
-    await page.getByRole('button', { name: /^Boards\./ }).click();
+    await page.getByRole('button', { name: /^Open boards\./ }).click();
     const dialog = page.getByRole('dialog', { name: 'Boards' });
     await dialog.getByRole('button', { name: 'Rename Untitled board' }).click();
     await dialog.getByRole('textbox', { name: 'Board name', exact: true }).fill('Nope');
@@ -210,31 +313,6 @@ test.describe('board rename', () => {
     await expect(dialog.getByRole('button', { name: /^Untitled board/ })).toBeVisible();
   });
 
-  test('renames the current board in place without adding a board', async ({ page }) => {
-    await page.getByRole('button', { name: 'Rename board' }).click();
-    const field = page.getByRole('textbox', { name: 'Board name' });
-    await expect(field).toBeFocused();
-    await field.fill('Plans');
-    await field.press('Enter');
-    await expect(page.getByRole('button', { name: /Current board: Plans/ })).toBeVisible();
-
-    await page.getByRole('button', { name: /^Boards\./ }).click();
-    const dialog = page.getByRole('dialog', { name: 'Boards' });
-    await expect(dialog.getByRole('listitem')).toHaveCount(1);
-    await expect(dialog.getByRole('listitem')).toContainText('Plans');
-    await page.keyboard.press('Escape');
-
-    await page.reload();
-    await expect(page.getByRole('button', { name: /Current board: Plans/ })).toBeVisible();
-  });
-
-  test('Escape discards the edit', async ({ page }) => {
-    await page.getByRole('button', { name: 'Rename board' }).click();
-    const field = page.getByRole('textbox', { name: 'Board name' });
-    await field.fill('Nope');
-    await field.press('Escape');
-    await expect(page.getByRole('button', { name: /Current board: Untitled board/ })).toBeVisible();
-  });
 });
 
 test.describe('settings', () => {
@@ -261,16 +339,36 @@ test.describe('settings', () => {
     await page.emulateMedia({ colorScheme: 'dark' });
     await expect(page.locator('html')).toHaveAttribute('data-theme', 'dark');
     const dialog = await openSettings(page);
-    await dialog.getByRole('radio', { name: 'Light mode' }).check();
+    await dialog.getByLabel('Theme', { exact: true }).selectOption('light');
     await expect(page.locator('html')).toHaveAttribute('data-theme', 'light');
     await page.reload();
     await expect(page.locator('html')).toHaveAttribute('data-theme', 'light');
 
     const again = await openSettings(page);
-    await again.getByRole('radio', { name: 'Sync with device' }).check();
+    await again.getByLabel('Theme', { exact: true }).selectOption('system');
     await expect(page.locator('html')).toHaveAttribute('data-theme', 'dark');
     await page.emulateMedia({ colorScheme: 'light' });
     await expect(page.locator('html')).toHaveAttribute('data-theme', 'light');
+  });
+
+  test('Appearance offers only active themes; named themes ignore OS changes and persist', async ({ page }) => {
+    await page.emulateMedia({ colorScheme: 'light' });
+    const dialog = await openSettings(page);
+    const select = dialog.getByLabel('Theme', { exact: true });
+    await expect(select.locator('option')).toHaveText([
+      'Sync with device', 'Light mode', 'Dark mode', 'Pale Rose',
+    ]);
+    await expect(dialog.getByRole('radio')).toHaveCount(0);
+    for (const theme of ['pale-rose']) {
+      await select.selectOption(theme);
+      await expect(page.locator('html')).toHaveAttribute('data-theme', theme);
+      await page.emulateMedia({ colorScheme: 'dark' });
+      await expect(page.locator('html')).toHaveAttribute('data-theme', theme);
+      await page.emulateMedia({ colorScheme: 'light' });
+    }
+    await page.reload();
+    await expect(page.locator('html')).toHaveAttribute('data-theme', 'pale-rose');
+    await expect(page.locator('html')).toHaveCSS('color-scheme', 'light');
   });
 
   test('language switches the whole interface and is remembered', async ({ page }) => {

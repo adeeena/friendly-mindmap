@@ -170,6 +170,7 @@ function replayEditorKey(editor: Editor, token: string): void {
         [class]="'side-' + childSide()"
         tabindex="-1"
         [attr.aria-label]="t('node.addChild')"
+        [attr.title]="t('node.addChild')"
         (pointerdown)="$event.stopPropagation()"
         (click)="addChild($event)"
       >
@@ -181,6 +182,7 @@ function replayEditorKey(editor: Editor, token: string): void {
         [class]="'side-' + siblingSide()"
         tabindex="-1"
         [attr.aria-label]="t('node.addSibling')"
+        [attr.title]="t('node.addSibling')"
         (pointerdown)="$event.stopPropagation()"
         (click)="addSibling($event)"
       >

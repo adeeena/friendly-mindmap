@@ -3,7 +3,7 @@
  */
 import 'fake-indexeddb/auto';
 import { ROOT_KEY, SCHEMA_VERSION, createBoard, createNode } from '../core/model';
-import { BoardRecord, MemoryBoardRepository, RevisionConflictError } from './board-repository';
+import { AttachmentPolicyError, BoardRecord, MemoryBoardRepository, RevisionConflictError } from './board-repository';
 import { IndexedDbBoardRepository } from './indexeddb-repository';
 import { MIGRATIONS, NewerSchemaError, migrateBoard } from './migrations';
 
@@ -18,7 +18,11 @@ describe.each([
 ])('%s repository', (_name, make) => {
   it('increments revision on each save and lists boards', async () => {
     const repo = make();
-    expect((await repo.save(record('a'), null)).revision).toBe(1);
+    const result = await repo.save(record('a'), null);
+    expect(result.revision).toBe(1);
+    expect(result.cloud).toEqual({ status: 'not-applicable' });
+    expect(result.localDurability).toBe(_name === 'memory' ? 'memory' : 'persistent');
+    expect(repo.workspace).toEqual({ kind: 'guest' });
     expect((await repo.save(record('a'), 1)).revision).toBe(2);
     await repo.save(record('b', 'Other'), null);
     expect((await repo.load('a'))?.revision).toBe(2);
@@ -30,13 +34,17 @@ describe.each([
     await repo.save(record('a'), null);
     await repo.save(record('a'), 1);
     await expect(repo.save(record('a'), 1)).rejects.toBeInstanceOf(RevisionConflictError);
+    await expect(repo.save(record('a'), null)).rejects.toBeInstanceOf(RevisionConflictError);
+    await expect(repo.save(record('a'), 99)).rejects.toBeInstanceOf(RevisionConflictError);
+    await repo.delete('a');
+    await expect(repo.save(record('a'), 2)).rejects.toBeInstanceOf(RevisionConflictError);
   });
 
   it('stores, lists and deletes attachments with the board', async () => {
     const repo = make();
     await repo.save(record('a'), null);
     const meta = { id: 'f1', name: 'x.txt', mime: 'text/plain', size: 3 };
-    await repo.putAttachment('a', meta, new Blob(['abc'], { type: 'text/plain' }));
+    await repo.putAttachment('a', meta, new Blob(['abc'], { type: 'text/plain' }), { nodeId: 'n', attachments: [] });
     expect(await repo.listAttachmentIds('a')).toEqual(['f1']);
     const blob = await repo.getAttachment('a', 'f1');
     expect(await blob?.text()).toBe('abc');
@@ -50,6 +58,35 @@ describe.each([
     await repo.setMeta('lastBoard', 'a');
     expect(await repo.getMeta('lastBoard')).toBe('a');
   });
+
+  it('requires node context and actual-byte metadata and enforces exact guest limits', async () => {
+    const repo = make();
+    const meta = { id: 'f', name: 'file.bin', mime: 'application/octet-stream', size: 5_242_880 };
+    const blob = new Blob([new Uint8Array(meta.size)]);
+    await repo.putAttachment('a', meta, blob, { nodeId: 'node', attachments: [] });
+    expect((await repo.getAttachment('a', meta.id))?.size).toBe(meta.size);
+    await expect(repo.putAttachment('a', { ...meta, id: 'large', size: meta.size + 1 },
+      new Blob([new Uint8Array(meta.size + 1)]), { nodeId: 'node', attachments: [] })).rejects.toMatchObject({ violation: 'size' });
+    await expect(repo.putAttachment('a', { ...meta, id: 'second' }, blob,
+      { nodeId: 'node', attachments: [meta] })).rejects.toMatchObject({ violation: 'count' });
+    await expect(repo.putAttachment('a', { ...meta, size: 1 }, blob,
+      { nodeId: 'node', attachments: [] })).rejects.toBeInstanceOf(AttachmentPolicyError);
+  });
+});
+
+it('keeps legacy over-limit IndexedDB bytes readable and removable without migrating guest data', async () => {
+  const { openDB } = await import('idb');
+  const name = 'legacy-' + Math.random();
+  const repo = new IndexedDbBoardRepository(name);
+  await repo.save(record('legacy'), null);
+  const db = await openDB(name);
+  const meta = { id: 'large', name: 'legacy.bin', mime: 'application/octet-stream', size: 10 * 1024 * 1024 };
+  await db.put('attachments', { boardId: 'legacy', id: meta.id, meta, data: new Uint8Array(meta.size).buffer });
+  expect(db.version).toBe(1);
+  expect((await repo.getAttachment('legacy', meta.id))?.size).toBe(meta.size);
+  await repo.deleteAttachment('legacy', meta.id);
+  expect(await repo.getAttachment('legacy', meta.id)).toBeNull();
+  db.close();
 });
 
 describe('migrations', () => {

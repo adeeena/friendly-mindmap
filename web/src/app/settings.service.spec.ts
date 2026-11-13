@@ -1,7 +1,7 @@
 import { TestBed } from '@angular/core/testing';
 import { APP_INFO } from './app-info';
 import { setLanguage } from './i18n';
-import { SETTINGS_STORAGE_KEY, SettingsService } from './settings.service';
+import { PAINT_STORAGE_KEY, SETTINGS_STORAGE_KEY, SettingsService, THEMES } from './settings.service';
 import pkg from '../../package.json';
 
 interface FakeQuery {
@@ -95,6 +95,49 @@ describe('SettingsService', () => {
     TestBed.tick();
     expect(document.documentElement.dataset['theme']).toBe('light');
     expect(document.documentElement.lang).toBe('fr');
+  });
+
+  it('supports active themes and keeps retired choices out of the selectable list', () => {
+    const query = stubMatchMedia(false);
+    const s = fresh();
+    s.setTheme('pale-rose');
+    TestBed.tick();
+    expect(s.resolvedTheme()).toBe('pale-rose');
+    expect(document.documentElement.dataset['theme']).toBe('pale-rose');
+    expect(document.documentElement.style.colorScheme).toBe('light');
+    query.listeners.forEach((l) => l({ matches: true }));
+    expect(s.resolvedTheme()).toBe('pale-rose');
+    query.listeners.forEach((l) => l({ matches: false }));
+    expect(JSON.parse(localStorage.getItem(SETTINGS_STORAGE_KEY)!).theme).toBe('pale-rose');
+    expect(localStorage.getItem(PAINT_STORAGE_KEY)).toBe('pale-rose');
+    expect(Array.from(THEMES)).toEqual(['system', 'light', 'dark', 'pale-rose']);
+  });
+
+  it('falls back to System for retired themes in guest preferences', () => {
+    for (const theme of ['win98', 'cs3-gray']) {
+      localStorage.setItem(SETTINGS_STORAGE_KEY, JSON.stringify({ theme }));
+      expect(fresh().theme()).toBe('system');
+    }
+  });
+
+  it('keeps account choices out of guest storage and restores guest values on logout', () => {
+    const s = fresh();
+    s.setTheme('dark');
+    s.setLanguage('hu');
+    const changes: unknown[] = [];
+    s.useAccount({ theme: 'pale-rose' }, (change) => changes.push(change));
+    expect(s.theme()).toBe('pale-rose');
+    s.setTheme('light');
+    s.setLanguage('fr');
+    expect(changes).toEqual([{ theme: 'light' }, { language: 'fr' }]);
+    expect(JSON.parse(localStorage.getItem(SETTINGS_STORAGE_KEY)!)).toEqual({ theme: 'dark', language: 'hu' });
+    s.applyAccountValues({ theme: 'cs3-gray', language: 'en' });
+    expect(s.theme()).toBe('system');
+    s.useGuest();
+    expect(s.theme()).toBe('dark');
+    expect(s.language()).toBe('hu');
+    s.applyAccountValues({ theme: 'light' });
+    expect(s.theme()).toBe('dark');
   });
 });
 

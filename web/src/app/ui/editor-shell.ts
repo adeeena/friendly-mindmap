@@ -8,14 +8,17 @@ import {
   inject,
 } from '@angular/core';
 import { Dialog, DialogRef } from '@angular/cdk/dialog';
-import { OverlayContainer } from '@angular/cdk/overlay';
+import { Overlay, OverlayContainer } from '@angular/cdk/overlay';
 import { ComponentType } from '@angular/cdk/portal';
 import { APP_INFO } from '../app-info';
+import { AppUpdates } from '../app-updates';
 import { Command, CommandRegistry, HotkeyService, eventCombo, isEditableTarget, isMac } from '../editor/commands';
 import { EditorStore } from '../editor/editor-store';
 import { MessageKey, Msg, t, tm } from '../i18n';
 import { BoardSession } from '../persistence/board-session';
+import { WorkspaceSession } from '../persistence/workspace-session';
 import { BoardSwitcher } from './board-dialogs';
+import { AccountActions } from './account-actions';
 import { CommandPalette } from './command-palette';
 import { ContextToolbar } from './context-toolbar';
 import { EditorActions, Toaster } from './editor-actions';
@@ -27,6 +30,7 @@ import { Minimap } from './minimap';
 import { NotesPanel } from './notes-panel';
 import { SettingsDialog } from './settings-dialog';
 import { TagManager } from './tag-manager';
+import { HistoryDialog } from './history-dialog';
 import { Toolbar } from './toolbar';
 import { Viewport } from './viewport';
 
@@ -45,6 +49,8 @@ const COMMAND_TEXT: Record<string, [label: MessageKey, group: MessageKey]> = {
   'toggle.minimap': ['cmd.minimap', 'group.view'],
   undo: ['toolbar.undo', 'group.edit'],
   redo: ['toolbar.redo', 'group.edit'],
+  'workspace.save': ['cmd.save', 'group.file'],
+  'history.open': ['history.title', 'group.file'],
   'file.save': ['toolbar.save', 'group.file'],
   'file.load': ['toolbar.load', 'group.file'],
   'export.open': ['cmd.export', 'group.file'],
@@ -85,7 +91,7 @@ function localized(c: Command): Command {
 @Component({
   selector: 'bm-editor-shell',
   changeDetection: ChangeDetectionStrategy.OnPush,
-  imports: [Toolbar, Viewport, ContextToolbar, EmojiBar, EdgeMenu, Minimap, NotesPanel, Icon],
+  imports: [Toolbar, Viewport, ContextToolbar, EmojiBar, EdgeMenu, Minimap, NotesPanel, Icon, AccountActions],
   host: {
     class: 'bm-shell',
     '[class.notes-open]': 'notesVisible()',
@@ -98,12 +104,34 @@ function localized(c: Command): Command {
   template: `
     <header class="bm-header">
       <h1 class="visually-hidden">{{ t('shell.title', { app: appName, board: store.doc().name }) }}</h1>
-      <bm-toolbar (openBoards)="openBoards()" />
+      <bm-toolbar />
+      <div class="bm-account-corner bm-panel">
+        <div class="bm-account-tools">
+          <button type="button" class="bm-button" [attr.aria-label]="t('toolbar.boardsLabel', { name: store.doc().name })" [attr.title]="t('toolbar.boardsOpen')" (click)="openBoards()">
+            <bm-icon name="boards" [size]="16" />
+            <span>{{ t('toolbar.boardsOpen') }}</span>
+          </button>
+          <button type="button" class="bm-button" [attr.aria-label]="t('toolbar.export')" [attr.title]="t('toolbar.export')" (click)="registry.run('export.open')">
+            <bm-icon name="export" [size]="16" />
+            <span>{{ t('toolbar.export') }}</span>
+          </button>
+          <button type="button" class="bm-button" [attr.aria-label]="t('toolbar.settings')" [attr.title]="t('toolbar.settings')" (click)="registry.run('settings.open')">
+            <bm-icon name="settings" [size]="16" />
+            <span>{{ t('toolbar.settings') }}</span>
+          </button>
+        </div>
+        <bm-account-actions />
+      </div>
     </header>
     <main class="bm-main" [attr.aria-label]="t('shell.canvas')">
-      <bm-viewport />
-      @if (banners().length) {
+      @if (banners().length || updates.available() || updates.failed()) {
         <div class="bm-banners">
+          @if (updates.available() || updates.failed()) {
+            <div class="bm-banner" role="status">
+              <span>{{ t(updates.failed() ? 'update.failed' : 'update.ready') }}</span>
+              <button type="button" class="bm-button" (click)="reloadUpdate()">{{ t('update.reload') }}</button>
+            </div>
+          }
           @for (msg of banners(); track msg) {
             <div class="bm-banner" role="alert">
               <span>{{ tm(msg) }}</span>
@@ -113,38 +141,46 @@ function localized(c: Command): Command {
               @if (session.status() === 'error') {
                 <button type="button" class="bm-button" (click)="registry.run('file.save')">{{ t('banner.exportBoard') }}</button>
               }
+              @if (msg.key === workspace.syncError()) {
+                <button type="button" class="bm-button" (click)="workspace.retrySync()">{{ t('sync.retry') }}</button>
+              }
+              @if (msg === workspace.recoveryMessage()) {
+                <button type="button" class="bm-button" (click)="workspace.dismissRecovery()">{{ t('common.dismiss') }}</button>
+              }
             </div>
           }
         </div>
       }
-      <bm-context-toolbar />
-      <bm-emoji-bar />
-      @if (store.edgeMenu()) {
-        <bm-edge-menu />
-      }
-      @if (store.contextMenu(); as menu) {
-        <div class="bm-menu bm-panel bm-context-menu" role="menu" [attr.aria-label]="t('shell.nodeMenu')" [style.left.px]="menu.x" [style.top.px]="menu.y" (keydown.escape)="closeMenu()">
-          @for (item of menuItems; track item.id) {
-            <button type="button" class="bm-button" role="menuitem" (click)="runMenu(item.id)">{{ t(item.label) }}</button>
-          }
-        </div>
-      }
-      <div class="bm-corner bm-corner-right bm-panel" role="group" [attr.aria-label]="t('shell.zoom')">
-        <button type="button" class="bm-button" [attr.aria-label]="t('zoom.out')" [attr.title]="tip(t('zoom.out'), 'zoom.out')" (click)="registry.run('zoom.out')"><bm-icon name="zoom-out" /></button>
-        <button type="button" class="bm-button bm-zoom-label" [attr.aria-label]="t('zoom.reset')" [attr.title]="tip(t('zoom.resetTip'), 'zoom.reset')" (click)="registry.run('zoom.reset')">
-          {{ zoomPct() }}%
-        </button>
-        <button type="button" class="bm-button" [attr.aria-label]="t('zoom.in')" [attr.title]="tip(t('zoom.in'), 'zoom.in')" (click)="registry.run('zoom.in')"><bm-icon name="zoom-in" /></button>
-        <button type="button" class="bm-button" [attr.aria-label]="t('zoom.fit')" [attr.title]="tip(t('zoom.fit'), 'zoom.fit')" (click)="registry.run('zoom.fit')"><bm-icon name="fit" /></button>
-      </div>
-      <div class="bm-corner bm-corner-left">
-        <div class="bm-panel bm-corner-buttons" role="group" [attr.aria-label]="t('shell.view')">
-          <button type="button" class="bm-button" [attr.aria-label]="t('view.minimap')" [attr.aria-pressed]="store.settings().minimap" [attr.title]="tip(t('view.minimap'), 'toggle.minimap')" (click)="registry.run('toggle.minimap')"><bm-icon name="minimap" /></button>
-          <button type="button" class="bm-button" [attr.aria-label]="t('view.tags')" [attr.aria-pressed]="store.tagFilter().length > 0" [attr.title]="t('view.tags')" (click)="registry.run('tags.manage')"><bm-icon name="tag" /></button>
-        </div>
-        @if (store.settings().minimap) {
-          <bm-minimap />
+      <div class="bm-canvas">
+        <bm-viewport />
+        <bm-context-toolbar />
+        <bm-emoji-bar />
+        @if (store.edgeMenu()) {
+          <bm-edge-menu />
         }
+        @if (store.contextMenu(); as menu) {
+          <div class="bm-menu bm-panel bm-context-menu" role="menu" [attr.aria-label]="t('shell.nodeMenu')" [style.left.px]="menu.x" [style.top.px]="menu.y" (keydown.escape)="closeMenu()">
+            @for (item of menuItems; track item.id) {
+              <button type="button" class="bm-button" role="menuitem" (click)="runMenu(item.id)">{{ t(item.label) }}</button>
+            }
+          </div>
+        }
+        <div class="bm-corner bm-corner-right">
+          @if (store.settings().minimap) {
+            <bm-minimap />
+          }
+          <div class="bm-panel bm-corner-buttons bm-view-zoom-group" role="group" [attr.aria-label]="t('shell.viewZoom')">
+            <button type="button" class="bm-button" [attr.aria-label]="t('zoom.out')" [attr.title]="tip(t('zoom.out'), 'zoom.out')" (click)="registry.run('zoom.out')"><bm-icon name="zoom-out" /></button>
+            <button type="button" class="bm-button bm-zoom-label" [attr.aria-label]="t('zoom.reset')" [attr.title]="tip(t('zoom.resetTip'), 'zoom.reset')">
+              {{ zoomPct() }}%
+            </button>
+            <button type="button" class="bm-button" [attr.aria-label]="t('zoom.in')" [attr.title]="tip(t('zoom.in'), 'zoom.in')" (click)="registry.run('zoom.in')"><bm-icon name="zoom-in" /></button>
+            <button type="button" class="bm-button" [attr.aria-label]="t('zoom.fit')" [attr.title]="tip(t('zoom.fit'), 'zoom.fit')" (click)="registry.run('zoom.fit')"><bm-icon name="fit" /></button>
+            <span class="bm-corner-sep" aria-hidden="true"></span>
+            <button type="button" class="bm-button" data-view-control="minimap" [attr.aria-label]="t('view.minimap')" [attr.aria-pressed]="store.settings().minimap" [attr.title]="tip(t('view.minimap'), 'toggle.minimap')" (click)="registry.run('toggle.minimap')"><bm-icon name="minimap" /></button>
+            <button type="button" class="bm-button" data-view-control="tags" [attr.aria-label]="t('view.tags')" [attr.aria-pressed]="store.tagFilter().length > 0" [attr.title]="t('view.tags')" (click)="registry.run('tags.manage')"><bm-icon name="tag" /></button>
+          </div>
+        </div>
       </div>
     </main>
     @if (notesVisible()) {
@@ -152,7 +188,7 @@ function localized(c: Command): Command {
     }
     <div class="bm-toasts" aria-live="polite">
       @for (toast of toaster.toasts(); track toast.id) {
-        <div class="bm-toast bm-panel" [class.error]="toast.kind === 'error'" [attr.role]="toast.kind === 'error' ? 'alert' : 'status'">
+        <div class="bm-toast bm-panel" [class.error]="toast.kind === 'error'" [class.warning]="toast.kind === 'warning'" [attr.role]="toast.kind === 'error' ? 'alert' : 'status'">
           {{ toast.text }}
           <button type="button" class="bm-button" [attr.aria-label]="t('common.dismiss')" (click)="toaster.dismiss(toast.id)"><bm-icon name="close" [size]="14" /></button>
         </div>
@@ -161,6 +197,12 @@ function localized(c: Command): Command {
   `,
 })
 export class EditorShell {
+  protected readonly updates = inject(AppUpdates);
+  protected readonly workspace = inject(WorkspaceSession);
+
+  protected async reloadUpdate(): Promise<void> {
+    if (await this.updates.prepareReload()) window.location.reload();
+  }
   protected readonly t = t;
   protected readonly tm = tm;
   protected readonly appName = APP_INFO.name;
@@ -170,13 +212,17 @@ export class EditorShell {
   protected readonly toaster = inject(Toaster);
   private readonly actions = inject(EditorActions);
   private readonly dialog = inject(Dialog);
+  private readonly overlay = inject(Overlay);
   private readonly host = inject<ElementRef<HTMLElement>>(ElementRef);
   private openDialog: DialogRef<unknown> | null = null;
 
   protected readonly zoomPct = computed(() => Math.round(this.store.camera().zoom * 100));
   protected readonly notesVisible = computed(() => this.store.notesOpen());
   protected readonly banners = computed(() =>
-    [this.session.storageWarning(), this.session.statusMessage(), this.session.conflictMessage()].filter(
+    [this.session.storageWarning(), this.session.statusMessage(), this.session.conflictMessage(),
+      this.workspace.error() ? { key: this.workspace.error()! } : null,
+      this.workspace.syncError() ? { key: this.workspace.syncError()! } : null,
+      this.workspace.recoveryMessage()].filter(
       (m): m is Msg => !!m,
     ),
   );
@@ -204,7 +250,7 @@ export class EditorShell {
     doc.addEventListener('keydown', typeAhead, true);
     destroyRef.onDestroy(() => doc.removeEventListener('keydown', typeAhead, true));
     destroyRef.onDestroy(this.registry.register(this.buildCommands()));
-    void this.session.init(destroyRef);
+    void this.workspace.init(destroyRef);
     effect(() => {
       const menu = this.store.contextMenu();
       if (menu) setTimeout(() => this.host.nativeElement.querySelector<HTMLElement>('.bm-context-menu button')?.focus());
@@ -216,15 +262,37 @@ export class EditorShell {
     return k ? `${label} (${k})` : label;
   }
 
-  private modal<T>(component: ComponentType<T>, config: { ariaLabelledBy: string; data?: unknown; panelClass?: string; backdropClass?: string[] }): void {
+  private modal<T>(component: ComponentType<T>, config: {
+    ariaLabelledBy: string; data?: unknown; panelClass?: string; backdropClass?: string[]; anchor?: HTMLElement | null;
+  }): void {
     this.openDialog?.close();
     this.registry.modalOpen.set(true);
-    const ref = this.dialog.open(component, { ...config, autoFocus: 'first-tabbable', restoreFocus: true });
+    const { anchor, ...dialogConfig } = config;
+    const ref = this.dialog.open(component, {
+      ...dialogConfig,
+      ...(anchor ? { positionStrategy: this.anchoredTo(anchor), scrollStrategy: this.overlay.scrollStrategies.reposition(),
+        backdropClass: ['cdk-overlay-transparent-backdrop'], maxWidth: 'calc(100vw - 16px)', maxHeight: 'calc(100dvh - 16px)' } : {}),
+      autoFocus: 'first-tabbable', restoreFocus: true,
+    });
     this.openDialog = ref as DialogRef<unknown>;
     ref.closed.subscribe(() => {
       if (this.openDialog === (ref as DialogRef<unknown>)) this.openDialog = null;
       this.registry.modalOpen.set(this.dialog.openDialogs.length > 0);
+      // Safari/WebKit do not focus buttons on click, so the browser's restore would land on <body>.
+      if (anchor?.isConnected) anchor.focus();
     });
+  }
+
+  /** Opens beside the trigger (above it for bottom-left controls), flips on collision and never leaves the viewport. */
+  private anchoredTo(anchor: HTMLElement) {
+    return this.overlay.position().flexibleConnectedTo(anchor)
+      .withPositions([
+        { originX: 'start', originY: 'top', overlayX: 'start', overlayY: 'bottom', offsetY: -8 },
+        { originX: 'start', originY: 'bottom', overlayX: 'start', overlayY: 'top', offsetY: 8 },
+        { originX: 'end', originY: 'top', overlayX: 'end', overlayY: 'bottom', offsetY: -8 },
+        { originX: 'end', originY: 'bottom', overlayX: 'end', overlayY: 'top', offsetY: 8 },
+      ])
+      .withPush(true).withViewportMargin(8).withFlexibleDimensions(true).withGrowAfterOpen(true);
   }
 
   protected openBoards(): void {
@@ -371,14 +439,24 @@ export class EditorShell {
       { id: 'undo', label: 'Undo', group: 'Edit', keys: ['mod+z'], run: () => s.undo(), enabled: () => s.canUndo() },
       { id: 'redo', label: 'Redo', group: 'Edit', keys: ['mod+shift+z', 'mod+y'], run: () => s.redo(), enabled: () => s.canRedo() },
       {
-        id: 'file.save',
-        label: 'Save to file',
+        id: 'workspace.save',
+        label: 'Save',
         group: 'File',
         keys: ['mod+s'],
         allowInEditable: true,
+        run: () => void this.actions.saveWorkspace(),
+      },
+      {
+        id: 'file.save',
+        label: 'Export to file',
+        group: 'File',
+        allowInEditable: true,
         run: () => (this.actions.hasAttachments() ? this.openExport('file') : void this.actions.saveFile(false)),
       },
-      { id: 'file.load', label: 'Load from file', group: 'File', keys: ['mod+o'], allowInEditable: true, run: () => this.actions.pickAndLoad() },
+      { id: 'file.load', label: 'Import from file', group: 'File', keys: ['mod+o'], allowInEditable: true, run: () => this.actions.pickAndLoad() },
+      { id: 'history.open', label: 'Board history', group: 'File', allowInEditable: true,
+        run: () => this.modal(HistoryDialog, { ariaLabelledBy: 'bm-history-title' }),
+        enabled: () => !!this.workspace.account() },
       { id: 'export.open', label: 'Export…', group: 'File', run: () => this.openExport() },
       { id: 'export.mermaid', label: 'Export Mermaid', group: 'Export', run: () => this.openExport('mermaid') },
       { id: 'export.png', label: 'Export PNG / SVG image', group: 'Export', run: () => this.openExport('image') },
@@ -420,11 +498,13 @@ export class EditorShell {
       { id: 'notes.toggle', label: 'Notes & attachments', group: 'Node', run: () => s.notesOpen.update((v) => !v), enabled: () => s.selectedIds().length === 1 || s.notesOpen() },
       { id: 'node.checklist', label: 'Convert to checklist', group: 'Node', run: () => s.convertToChecklist(), enabled: () => editable() && hasSel() },
       { id: 'node.todo', label: 'Toggle todo list for children', group: 'Node', run: () => s.setTodo(!s.doc().nodes[s.primaryId()!]?.todo), enabled: () => editable() && hasSel() },
-      { id: 'tags.manage', label: 'Manage & filter tags', group: 'Tags', run: () => this.modal(TagManager, { ariaLabelledBy: 'bm-tags-title' }) },
+      { id: 'tags.manage', label: 'Manage & filter tags', group: 'Tags', run: () => this.modal(TagManager, {
+        ariaLabelledBy: 'bm-tags-title', anchor: this.host.nativeElement.querySelector<HTMLElement>('[data-view-control="tags"]'),
+      }) },
       { id: 'tags.clear', label: 'Clear tag filter', group: 'Tags', run: () => s.tagFilter.set([]), enabled: () => s.tagFilter().length > 0 },
       { id: 'boards.open', label: 'Switch board…', group: 'Boards', run: () => this.openBoards() },
       { id: 'boards.new', label: 'New board', group: 'Boards', run: () => void this.session.create(t('board.untitled')) },
-      { id: 'boards.rename', label: 'Rename board', group: 'Boards', run: () => s.boardRenaming.set(true), enabled: editable },
+      { id: 'boards.rename', label: 'Rename board', group: 'Boards', run: () => this.openBoards(), enabled: editable },
       {
         id: 'node.resetPosition',
         label: 'Reset node position',

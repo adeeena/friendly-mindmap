@@ -39,6 +39,7 @@ testem.log
 /typings
 __screenshots__/
 /test-results
+/test-results-*
 /playwright-report
 /blob-report
 

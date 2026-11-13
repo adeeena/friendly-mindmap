@@ -28,6 +28,14 @@ describe('EditorStore', () => {
     expect(store.doc().nodes[child]).toBeDefined();
   });
 
+  it('clamps a restored camera to canvas zoom limits', () => {
+    const doc = store.doc();
+    store.loadBoard({ doc, camera: { x: 0, y: 0, zoom: 20 } });
+    expect(store.camera().zoom).toBe(4);
+    store.loadBoard({ doc, camera: { x: 0, y: 0, zoom: 0.01 } });
+    expect(store.camera().zoom).toBe(0.1);
+  });
+
   it('derives resolved styles and visibility (collapse)', () => {
     const root = store.createRootAt({ x: 0, y: 0 }, { edit: false });
     const child = store.addChild(root, false)!;

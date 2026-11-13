@@ -160,7 +160,7 @@ export class ContextToolbar {
   protected readonly canConvert = computed(() => this.primaryNode()?.kind === 'topic');
 
   /** Docked at the top of the canvas so it never covers neighbouring nodes. */
-  protected readonly pos = computed(() => (this.store.selectionBarVisible() ? true : null));
+  protected readonly pos = computed(() => (this.store.selectionToolbarVisible() ? true : null));
 
   protected hasTag(tagId: string): boolean {
     const nodes = this.store.doc().nodes;

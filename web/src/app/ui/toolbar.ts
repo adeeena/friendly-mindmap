@@ -1,4 +1,4 @@
-import { ChangeDetectionStrategy, Component, computed, effect, inject, output, viewChild, ElementRef } from '@angular/core';
+import { ChangeDetectionStrategy, Component, computed, inject } from '@angular/core';
 import { ConnectedPosition } from '@angular/cdk/overlay';
 import { CdkMenu, CdkMenuItemRadio, CdkMenuTrigger } from '@angular/cdk/menu';
 import { LayoutDirection, Shape } from '../core/model';
@@ -101,56 +101,9 @@ interface ToolButton {
         <bm-icon name="redo" />
       </button>
     </div>
-    <span class="bm-tb-sep" aria-hidden="true"></span>
-    <div class="bm-tb-group" role="group" [attr.aria-label]="t('toolbar.file')">
-      <button type="button" class="bm-button" [attr.aria-label]="t('toolbar.export')" [attr.title]="t('toolbar.export')" (click)="registry.run('export.open')">
-        <bm-icon name="export" />
-      </button>
-    </div>
-    <span class="bm-tb-sep" aria-hidden="true"></span>
-    <div class="bm-tb-group bm-board-group" role="group" [attr.aria-label]="t('toolbar.boards')">
-      @if (store.boardRenaming()) {
-        <form class="bm-row bm-board-rename" (submit)="commitRename($event, renameInput.value)">
-          <label class="visually-hidden" for="bm-board-rename">{{ t('boards.renameLabel') }}</label>
-          <input
-            #renameInput
-            id="bm-board-rename"
-            type="text"
-            maxlength="200"
-            [value]="store.doc().name"
-            (keydown.escape)="cancelRename($event)"
-            (blur)="commitRename($event, renameInput.value)"
-          />
-        </form>
-      } @else {
-        <button
-          type="button"
-          class="bm-button bm-board-btn"
-          [attr.aria-label]="t('toolbar.boardsLabel', { name: store.doc().name })"
-          [attr.title]="t('toolbar.boardsOpen')"
-          (click)="openBoards.emit()"
-        >
-          <bm-icon name="boards" />
-          <span class="bm-board-name">{{ store.doc().name }}</span>
-        </button>
-        <button
-          type="button"
-          class="bm-button"
-          [attr.aria-label]="t('toolbar.rename')"
-          [attr.title]="t('toolbar.rename')"
-          [disabled]="store.readOnly()"
-          (click)="store.boardRenaming.set(true)"
-        >
-          <bm-icon name="edit" />
-        </button>
-      }
-    </div>
-    <span class="bm-save-status" role="status" [attr.data-status]="session.status()">{{ statusText() }}</span>
+    <span class="bm-save-status" role="status" [attr.aria-live]="session.status() === 'saving' ? 'off' : 'polite'" [attr.data-status]="session.status()">{{ statusText() }}</span>
     <button type="button" class="bm-button" [attr.aria-label]="t('toolbar.palette')" [attr.title]="tip(t('toolbar.paletteTip'), 'palette.open')" (click)="registry.run('palette.open')">
       <bm-icon name="command" />
-    </button>
-    <button type="button" class="bm-button" [attr.aria-label]="t('toolbar.settings')" [attr.title]="t('toolbar.settings')" (click)="registry.run('settings.open')">
-      <bm-icon name="settings" />
     </button>
 
     <ng-template #shapeMenu>
@@ -199,9 +152,6 @@ export class Toolbar {
   protected readonly store = inject(EditorStore);
   protected readonly registry = inject(CommandRegistry);
   protected readonly session = inject(BoardSession);
-  readonly openBoards = output<void>();
-  private readonly renameInput = viewChild<ElementRef<HTMLInputElement>>('renameInput');
-
   protected readonly menuPositions: ConnectedPosition[] = [
     { originX: 'end', originY: 'top', overlayX: 'start', overlayY: 'top', offsetX: 8 },
     { originX: 'start', originY: 'bottom', overlayX: 'start', overlayY: 'top', offsetY: 4 },
@@ -233,10 +183,9 @@ export class Toolbar {
 
   protected readonly statusText = computed(() => {
     switch (this.session.status()) {
-      case 'saving':
-        return t('status.saving');
       case 'saved':
-        return this.store.readOnly() ? t('status.readOnly') : t('status.saved');
+        if (this.store.readOnly()) return t('status.readOnly');
+        return '';
       case 'error':
         return t('status.error');
       default:
@@ -244,33 +193,9 @@ export class Toolbar {
     }
   });
 
-  constructor() {
-    // Focus the field as soon as it is rendered, whichever action asked for the rename.
-    effect(() => {
-      const input = this.renameInput()?.nativeElement;
-      if (input && this.store.boardRenaming()) {
-        input.focus();
-        input.select();
-      }
-    });
-  }
-
   protected tip(label: string, command: string): string {
     const k = this.registry.shortcutFor(command);
     return k ? `${label} (${k})` : label;
-  }
-
-  protected async commitRename(e: Event, name: string): Promise<void> {
-    e.preventDefault();
-    if (!this.store.boardRenaming()) return;
-    this.store.boardRenaming.set(false);
-    const clean = name.trim();
-    if (clean && clean !== this.store.doc().name) await this.session.rename(this.store.doc().id, clean);
-  }
-
-  protected cancelRename(e: Event): void {
-    e.stopPropagation();
-    this.store.boardRenaming.set(false);
   }
 
   protected pickShape(shape: Shape): void {

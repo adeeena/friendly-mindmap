@@ -186,4 +186,13 @@ describe('rich text', () => {
     expect(html).toContain('href="https://a.b"');
     expect(html).toContain('rel="noopener noreferrer"');
   });
+
+  it('preserves and renders underline marks', () => {
+    const doc = sanitizeRichDoc({
+      type: 'doc',
+      content: [{ type: 'paragraph', content: [{ type: 'text', text: 'underlined', marks: [{ type: 'underline' }] }] }],
+    });
+    expect(doc.content?.[0].content?.[0].marks).toEqual([{ type: 'underline' }]);
+    expect(richToHtml(doc)).toContain('<u>underlined</u>');
+  });
 });

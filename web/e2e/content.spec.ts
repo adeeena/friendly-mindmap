@@ -5,17 +5,30 @@ import { MOD, addRoot, buildTree, node, openApp } from './helpers';
 
 test.beforeEach(async ({ page }) => openApp(page));
 
-test('bold text survives reload', async ({ page }) => {
+test('text formatting survives reload', async ({ page }) => {
   await addRoot(page, 200, 200, 'make bold');
   await node(page, 'make bold').press('F2');
   await expect(page.getByRole('textbox', { name: 'Node text' })).toBeFocused();
+  const selectionToolbar = page.getByRole('toolbar', { name: 'Selection' });
+  await expect(selectionToolbar).toBeVisible();
+  for (const name of ['Color', 'Emoji', 'Tags', 'Delete']) {
+    await expect(selectionToolbar.getByRole('button', { name })).toBeVisible();
+  }
   await page.keyboard.press(`${MOD}+a`);
-  await page.keyboard.press(`${MOD}+b`);
+  for (const mark of ['Bold', 'Italic', 'Underline']) {
+    const button = page.getByRole('button', { name: mark });
+    await button.click();
+    await expect(button).toHaveAttribute('aria-pressed', 'true');
+  }
   await page.keyboard.press('Escape');
   await expect(node(page, 'make bold').locator('strong')).toHaveText('make bold');
+  await expect(node(page, 'make bold').locator('em')).toHaveText('make bold');
+  await expect(node(page, 'make bold').locator('u')).toHaveText('make bold');
   await page.waitForTimeout(1200);
   await page.reload();
   await expect(node(page, 'make bold').locator('strong')).toHaveText('make bold');
+  await expect(node(page, 'make bold').locator('em')).toHaveText('make bold');
+  await expect(node(page, 'make bold').locator('u')).toHaveText('make bold');
 });
 
 test('unsafe links are rejected in the link form', async ({ page }) => {
@@ -70,7 +83,7 @@ test('notes panel edits a note and passes AXE', async ({ page }) => {
   expect(results.violations.map((v) => `${v.id}: ${v.nodes.length}`)).toEqual([]);
 });
 
-test('attach an image with thumbnail and refuse files over 10 MB', async ({ page }) => {
+test('attach an image with thumbnail and enforce guest size/count limits', async ({ page }) => {
   await addRoot(page, 200, 200, 'Files');
   await page.getByRole('toolbar', { name: 'Selection' }).getByRole('button', { name: 'Notes and attachments' }).click();
   const png = Buffer.from(
@@ -82,8 +95,10 @@ test('attach an image with thumbnail and refuse files over 10 MB', async ({ page
   await expect(page.getByText('dot.png')).toBeVisible();
   await expect(page.locator('bm-notes-panel img.bm-thumb')).toHaveCount(1);
   await expect(node(page, 'Files').getByRole('button', { name: '1 attachments' })).toBeVisible();
-  await input.setInputFiles({ name: 'big.bin', mimeType: 'application/octet-stream', buffer: Buffer.alloc(11 * 1024 * 1024) });
-  await expect(page.locator('bm-notes-panel .bm-error')).toContainText('10 MB');
+  await input.setInputFiles({ name: 'big.bin', mimeType: 'application/octet-stream', buffer: Buffer.alloc(5_242_881) });
+  await expect(page.locator('bm-notes-panel .bm-error')).toContainText('5 MiB');
+  await input.setInputFiles({ name: 'second.txt', mimeType: 'text/plain', buffer: Buffer.from('second') });
+  await expect(page.locator('bm-notes-panel .bm-error')).toContainText('one attachment per block');
 });
 
 test('shopping list checklist shows progress', async ({ page }) => {
@@ -118,6 +133,7 @@ interface PngStats {
   width: number;
   height: number;
   cornerAlpha: number;
+  corner: number[];
   /** pixels that are not backdrop: opaque-and-different from the corner colour, or any alpha when the corner is transparent */
   content: number;
   /** content pixels in the probed image column */
@@ -127,14 +143,15 @@ interface PngStats {
 /** Exports the board as PNG through the dialog and decodes the downloaded file in the browser. */
 async function exportPng(
   page: Page,
-  opts: { background: boolean; selectionOnly?: boolean; probeX?: number },
+  opts: { background: boolean; selectionOnly?: boolean; probeX?: number; lightTheme?: boolean },
 ): Promise<PngStats> {
   await page.getByRole('button', { name: 'Export', exact: true }).click();
-  const dialog = page.getByRole('dialog', { name: /Save/ });
+  const dialog = page.getByRole('dialog', { name: 'Export', exact: true });
   await dialog.getByRole('tab', { name: 'Image' }).click();
   await dialog.getByRole('radio', { name: '1x' }).check();
   const bg = dialog.getByLabel('Background');
   if ((await bg.isChecked()) !== opts.background) await bg.setChecked(opts.background);
+  if (opts.lightTheme !== undefined) await dialog.getByLabel('Light theme').setChecked(opts.lightTheme);
   if (opts.selectionOnly) await dialog.getByRole('radio', { name: 'Selection' }).check();
   const download = page.waitForEvent('download');
   await dialog.getByRole('button', { name: 'Export image' }).click();
@@ -165,7 +182,7 @@ async function exportPng(
           if (x === probeX) columnContent++;
         }
       }
-      return { width: bmp.width, height: bmp.height, cornerAlpha: corner[3], content, columnContent };
+      return { width: bmp.width, height: bmp.height, cornerAlpha: corner[3], corner, content, columnContent };
     },
     { data: b64, probeX: opts.probeX ?? -1 },
   );
@@ -208,10 +225,76 @@ test.describe('PNG export pixels', () => {
   });
 });
 
+const EXPORT_THEMES = ['system', 'light', 'dark', 'pale-rose'] as const;
+
+async function storedDocs(page: Page): Promise<string> {
+  return page.evaluate(async () => {
+    const db = await new Promise<IDBDatabase>((resolve, reject) => {
+      const request = indexedDB.open('better-mindmap');
+      request.onsuccess = () => resolve(request.result);
+      request.onerror = () => reject(request.error);
+    });
+    const boards = await new Promise<{ doc: unknown }[]>((resolve, reject) => {
+      const request = db.transaction('boards').objectStore('boards').getAll();
+      request.onsuccess = () => resolve(request.result);
+      request.onerror = () => reject(request.error);
+    });
+    db.close();
+    return JSON.stringify(boards.map((board) => board.doc));
+  });
+}
+
+for (const theme of EXPORT_THEMES) {
+  test(`image export keeps board data and restores the ${theme} app theme`, async ({ page, browserName }) => {
+    test.skip(browserName !== 'chromium', 'the pixel probe needs OffscreenCanvas, which this WebKit build lacks (the existing PNG pixel tests share the limit)');
+    await page.evaluate((value) => localStorage.setItem('friendly-mindmap.settings', JSON.stringify({ theme: value, language: 'en' })), theme);
+    await page.reload();
+    await buildTree(page);
+    await page.waitForTimeout(1000);
+    const html = page.locator('html');
+    const applied = await html.getAttribute('data-theme');
+    const docs = await storedDocs(page);
+    const backdrop = await page.evaluate(() => {
+      const hex = getComputedStyle(document.documentElement).getPropertyValue('--bg').trim();
+      return [1, 3, 5].map((index) => parseInt(hex.slice(index, index + 2), 16));
+    });
+    const themed = await exportPng(page, { background: true, lightTheme: false });
+    expect(themed.corner.slice(0, 3)).toEqual(backdrop);
+    expect(await html.getAttribute('data-theme')).toBe(applied);
+    await expect(html).not.toHaveClass(/force-light|exporting/);
+    const light = await exportPng(page, { background: true, lightTheme: true });
+    expect(light.corner.slice(0, 3)).toEqual([0xf7, 0xf7, 0xf8]);
+    expect(light.content).toBeGreaterThan(500);
+    expect(await html.getAttribute('data-theme')).toBe(applied);
+    await expect(html).not.toHaveClass(/force-light|exporting/);
+    expect(await storedDocs(page)).toBe(docs);
+  });
+}
+
+test('print view stays white-on-dark-text under every active app theme', async ({ page, context }) => {
+  await buildTree(page);
+  await node(page, 'Root').click();
+  await page.getByRole('toolbar', { name: 'Selection' }).getByRole('button', { name: 'Todo list for children' }).click();
+  await page.waitForTimeout(1000);
+  const [doc] = JSON.parse(await storedDocs(page)) as { id: string; nodes: Record<string, { id: string; text: unknown }> }[];
+  const root = Object.values(doc.nodes).find((n) => JSON.stringify(n.text).includes('Root'))!;
+  for (const theme of ['dark', 'pale-rose']) {
+    await page.evaluate((value) => localStorage.setItem('friendly-mindmap.settings', JSON.stringify({ theme: value, language: 'en' })), theme);
+    const print = await context.newPage();
+    await print.addInitScript(() => { window.print = () => undefined; });
+    await print.goto(`/print/${doc.id}/${root.id}?w=guest`);
+    await expect(print.locator('html')).toHaveAttribute('data-theme', theme);
+    await expect(print.getByRole('heading', { name: 'Root' })).toBeVisible();
+    await expect(print.locator('bm-checklist-print')).toHaveCSS('background-color', 'rgb(255, 255, 255)');
+    await expect(print.locator('bm-checklist-print')).toHaveCSS('color', 'rgb(17, 17, 17)');
+    await print.close();
+  }
+});
+
 test('PNG image export downloads a file', async ({ page }) => {
   await buildTree(page);
   await page.getByRole('button', { name: 'Export', exact: true }).click();
-  const dialog = page.getByRole('dialog', { name: /Save/ });
+  const dialog = page.getByRole('dialog', { name: 'Export', exact: true });
   await dialog.getByRole('tab', { name: 'Image' }).click();
   const download = page.waitForEvent('download');
   await dialog.getByRole('button', { name: 'Export image' }).click();
@@ -235,7 +318,7 @@ for (const scheme of ['light', 'dark'] as const) {
     await page.getByRole('button', { name: 'Export', exact: true }).click();
     await check();
     await page.keyboard.press('Escape');
-    await page.getByRole('button', { name: /^Boards\./ }).click();
+    await page.getByRole('button', { name: /^Open boards\./ }).click();
     await check();
     await page.keyboard.press('Escape');
     await page.getByRole('button', { name: 'Tags and filter' }).click();

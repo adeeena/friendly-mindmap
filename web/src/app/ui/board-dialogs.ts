@@ -5,6 +5,7 @@ import { EditorStore } from '../editor/editor-store';
 import { CommandRegistry } from '../editor/commands';
 import { language, t } from '../i18n';
 import { BoardSession } from '../persistence/board-session';
+import { WorkspaceSession } from '../persistence/workspace-session';
 import { Icon } from './icon';
 
 export interface ConfirmData {
@@ -58,6 +59,9 @@ export function confirmDialog(dialog: Dialog, data: ConfirmData): Promise<boolea
       </div>
       <button type="button" class="bm-button" [attr.aria-label]="t('common.close')" (click)="ref.close()"><bm-icon name="close" /></button>
     </div>
+    @if (duplicateFailed()) {
+      <p class="bm-error" role="alert">{{ t('boards.duplicateFailed') }}</p>
+    }
     <form class="bm-bd-new" (submit)="create($event)">
       <label class="visually-hidden" for="bm-new-board">{{ t('boards.newName') }}</label>
       <input id="bm-new-board" #newName type="text" [attr.placeholder]="t('boards.newName')" cdkFocusInitial maxlength="200" />
@@ -94,24 +98,42 @@ export function confirmDialog(dialog: Dialog, data: ConfirmData): Promise<boolea
         </li>
       }
     </ul>
+    @if (!workspace.account()) {
+      <p class="bm-muted bm-cloud-notice">{{ t('auth.notice') }}</p>
+    }
     <div class="bm-bd-foot">
+      <button type="button" class="bm-button" (click)="saveWorkspace()"><bm-icon name="save" /> {{ t('boards.saveChanges') }}</button>
       <button type="button" class="bm-button" (click)="file('file.save')"><bm-icon name="save" /> {{ t('toolbar.save') }}</button>
       <button type="button" class="bm-button" (click)="file('file.load')"><bm-icon name="load" /> {{ t('toolbar.load') }}</button>
+      @if (workspace.account()) {
+        <button type="button" class="bm-button" (click)="history()"><bm-icon name="undo" /> {{ t('history.title') }}</button>
+      }
     </div>
   `,
 })
 export class BoardSwitcher {
   protected readonly t = t;
   protected readonly session = inject(BoardSession);
+  protected readonly workspace = inject(WorkspaceSession);
   protected readonly store = inject(EditorStore);
   protected readonly ref = inject(DialogRef);
   private readonly registry = inject(CommandRegistry);
   private readonly dialog = inject(Dialog);
   protected readonly renaming = signal<string | null>(null);
+  protected readonly duplicateFailed = signal(false);
+
+  protected history(): void {
+    this.registry.run('history.open');
+  }
 
   /** Runs a file command while the click still counts as a user gesture (the file picker needs it). */
   protected file(command: 'file.save' | 'file.load'): void {
     this.registry.run(command);
+    this.ref.close();
+  }
+
+  protected saveWorkspace(): void {
+    this.registry.run('workspace.save');
     this.ref.close();
   }
 
@@ -148,7 +170,9 @@ export class BoardSwitcher {
   }
 
   protected async duplicate(b: BoardSummary): Promise<void> {
-    await this.session.duplicate(b.id);
+    this.duplicateFailed.set(false);
+    try { await this.session.duplicate(b.id); }
+    catch { this.duplicateFailed.set(true); }
   }
 
   protected async remove(b: BoardSummary): Promise<void> {

@@ -1,5 +1,6 @@
 @use '@angular/cdk/overlay-prebuilt.css';
 @use 'styles/editor';
+@use 'styles/themes';
 
 // Color picker palette (same in both themes); the older keys stay defined for existing boards.
 $palette: (
@@ -112,7 +113,7 @@ $palette: (
 
 :root {
   color-scheme: light dark;
-  --font: system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+  --font: 'Fira Sans', system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
   --radius: 10px;
   --dim-opacity: 0.25;
   @include light-theme;
@@ -133,6 +134,89 @@ $palette: (
 :root[data-theme='light'] {
   color-scheme: light;
   @include light-theme;
+}
+
+// Cute Theme palette: white editor, blush chrome and the original pink/plum accents.
+@mixin rose-theme {
+  @include light-theme;
+  --focus: #ff4574;
+  --bg: #ffffff;
+  --grid-dot: #f1ced8;
+  --surface: #fceaf1;
+  --surface-2: #fcdee9;
+  --text: #333333;
+  --text-muted: #974283;
+  --border: #ffb1b7;
+  --border-strong: #974283;
+  --accent: #ad244d;
+  --accent-text: #ffffff;
+  --selection: #ff4574;
+  --guide: #974283;
+  --edge: #974283;
+  --danger: #a31d1d;
+  --shadow: 0 1px 2px rgb(151 66 131 / 12%), 0 4px 16px rgb(151 66 131 / 14%);
+  --tint-mix: 18%;
+}
+
+// Windows 98: teal desktop canvas, gray beveled chrome, navy highlights.
+@mixin win98-theme {
+  @include light-theme;
+  --focus: #000080;
+  --bg: #008080;
+  --grid-dot: #00a0a0;
+  --surface: #c0c0c0;
+  --surface-2: #dfdfdf;
+  --text: #000000;
+  --text-muted: #3a3a3a;
+  --border: #808080;
+  --border-strong: #404040;
+  --accent: #000080;
+  --accent-text: #ffffff;
+  --selection: #000080;
+  --guide: #ffff00;
+  --edge: #ffffff;
+  --danger: #800000;
+  --shadow: none;
+  --radius: 0;
+  --tint-mix: 20%;
+}
+
+// CS3 Gray: neutral mid-gray pasteboard with light-gray gradient panels, original (not proprietary) styling.
+@mixin cs3-theme {
+  @include light-theme;
+  --focus: #0a3f80;
+  --bg: #a0a0a0;
+  --grid-dot: #8d8d8d;
+  --surface: #dcdcdc;
+  --surface-2: #c8c8c8;
+  --text: #1c1c1c;
+  --text-muted: #2f2f2f;
+  --border: #8c8c8c;
+  --border-strong: #4a4a4a;
+  --accent: #0a3f80;
+  --accent-text: #ffffff;
+  --selection: #0a3f80;
+  --guide: #7a1f5c;
+  --edge: #333333;
+  --danger: #8a1212;
+  --shadow: 0 1px 0 rgb(255 255 255 / 45%) inset, 0 1px 3px rgb(0 0 0 / 35%);
+  --radius: 3px;
+  --tint-mix: 16%;
+}
+
+:root[data-theme='pale-rose'] {
+  color-scheme: light;
+  @include rose-theme;
+}
+
+:root[data-theme='win98'] {
+  color-scheme: light;
+  @include win98-theme;
+}
+
+:root[data-theme='cs3-gray'] {
+  color-scheme: light;
+  @include cs3-theme;
 }
 
 /* Forced light theme for image export. */

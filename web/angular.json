@@ -30,11 +30,18 @@
               }
             ],
             "styles": [
+              "node_modules/@fontsource/fira-sans/400.css",
+              "node_modules/@fontsource/fira-sans/500.css",
+              "node_modules/@fontsource/fira-sans/600.css",
+              "node_modules/@fontsource/fira-sans/700.css",
+              "node_modules/@fontsource/fira-sans/400-italic.css",
+              "node_modules/@fontsource/fira-sans/700-italic.css",
               "src/styles.scss"
             ]
           },
           "configurations": {
             "production": {
+              "serviceWorker": "ngsw-config.json",
               "budgets": [
                 {
                   "type": "initial",

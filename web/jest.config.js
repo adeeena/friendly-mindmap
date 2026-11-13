@@ -7,5 +7,5 @@ const presetConfig = createCjsPreset({ tsconfig: '<rootDir>/tsconfig.spec.json' 
 module.exports = {
   ...presetConfig,
   setupFilesAfterEnv: ['<rootDir>/setup-jest.ts'],
-  testPathIgnorePatterns: ['/node_modules/', '/e2e/'],
+  testPathIgnorePatterns: ['/node_modules/', '/e2e/', '/production-e2e/', '/cloud-e2e/', '/stack-e2e/'],
 };

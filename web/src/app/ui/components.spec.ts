@@ -9,7 +9,9 @@ import { EditorStore } from '../editor/editor-store';
 import { BOARD_REPOSITORY, MemoryBoardRepository } from '../persistence/board-repository';
 import { CommandRegistry } from '../editor/commands';
 import { BoardSession } from '../persistence/board-session';
+import { WorkspaceSession } from '../persistence/workspace-session';
 import { NodeView } from './node-view';
+import { AccountActions } from './account-actions';
 import { SettingsDialog } from './settings-dialog';
 import { Toolbar } from './toolbar';
 import { ContextToolbar } from './context-toolbar';
@@ -79,6 +81,35 @@ describe('UI components', () => {
       expect(el.querySelector('.bm-chip')?.textContent).toContain('work');
       expect(el.textContent).toContain('1/2');
       expect(el.getAttribute('aria-label')).toContain('1 of 2 done');
+    });
+
+    it('labels the bottom handle as sibling and the right handle as child', async () => {
+      const id = store.createRootAt({ x: 0, y: 0 }, { edit: false });
+      store.select([id]);
+      const fixture = TestBed.createComponent(NodeHost);
+      fixture.componentRef.setInput('id', id);
+      await fixture.whenStable();
+      const root = fixture.nativeElement as HTMLElement;
+      const bottomHandle = root.querySelector('.bm-handle.side-bottom') as HTMLButtonElement;
+      const rightHandle = root.querySelector('.bm-handle.side-right') as HTMLButtonElement;
+
+      expect(bottomHandle.title).toBe('Add sibling');
+      expect(rightHandle.title).toBe('Add child');
+
+      const existing = new Set(Object.keys(store.doc().nodes));
+      bottomHandle.click();
+      await fixture.whenStable();
+      const siblingId = Object.keys(store.doc().nodes).find((nodeId) => !existing.has(nodeId))!;
+      expect(store.doc().nodes[siblingId].parentId).toBe(store.doc().nodes[id].parentId);
+
+      store.select([id]);
+      fixture.detectChanges();
+      const childHandle = root.querySelector('.bm-handle.side-right') as HTMLButtonElement;
+      const beforeChild = new Set(Object.keys(store.doc().nodes));
+      childHandle.click();
+      await fixture.whenStable();
+      const childId = Object.keys(store.doc().nodes).find((nodeId) => !beforeChild.has(nodeId))!;
+      expect(store.doc().nodes[childId].parentId).toBe(id);
     });
   });
 
@@ -208,6 +239,13 @@ describe('UI components', () => {
       expect(root.textContent).not.toContain('About');
     });
 
+    it('offers only the active themes while retaining Pale Rose', async () => {
+      const { root } = await open();
+      const options = [...root.querySelectorAll<HTMLOptionElement>('#bm-theme-select option')];
+      expect(options.map((option) => option.value)).toEqual(['system', 'light', 'dark', 'pale-rose']);
+      expect(options[3].textContent).toContain('Pale Rose');
+    });
+
     it('credits the author in the footer with a link to the homepage', async () => {
       const { root } = await open();
       const footer = root.querySelector('.bm-set-footer') as HTMLElement;
@@ -223,7 +261,9 @@ describe('UI components', () => {
       const { fixture, root } = await open();
       const settings = TestBed.inject(SettingsService);
       const radio = (name: string, value: string) => root.querySelector<HTMLInputElement>(`input[name="${name}"][value="${value}"]`)!;
-      radio('bm-theme', 'dark').click();
+      const themeSelect = root.querySelector<HTMLSelectElement>('#bm-theme-select')!;
+      themeSelect.value = 'dark';
+      themeSelect.dispatchEvent(new Event('change'));
       root.querySelectorAll<HTMLButtonElement>('[role="tab"]')[1].click();
       await fixture.whenStable();
       radio('bm-language', 'fr').click();
@@ -258,7 +298,8 @@ describe('UI components', () => {
       await toolbar.whenStable();
       await selection.whenStable();
       const labels = (el: HTMLElement) => [...el.querySelectorAll('[aria-label]')].map((e) => e.getAttribute('aria-label'));
-      expect(labels(toolbar.nativeElement)).toEqual(expect.arrayContaining([d['tool.hand'], d['toolbar.undo'], d['toolbar.settings']]));
+      expect(labels(toolbar.nativeElement)).toEqual(expect.arrayContaining([d['tool.hand'], d['toolbar.undo']]));
+      expect(labels(toolbar.nativeElement)).not.toContain(d['toolbar.settings']);
       expect(labels(selection.nativeElement)).toEqual(expect.arrayContaining([d['selection.color'], d['selection.delete']]));
 
       store.openEdgeMenu({ type: 'hierarchy', childId: b }, { x: 0, y: 0 });
@@ -269,58 +310,21 @@ describe('UI components', () => {
     });
   });
 
-  describe('Board rename', () => {
-    const settle = () => new Promise((r) => setTimeout(r, 30));
-
+  describe('Board toolbar actions', () => {
     const setup = async () => {
-      const session = TestBed.inject(BoardSession);
-      await session.init();
+      await TestBed.inject(BoardSession).init();
       const fixture = TestBed.createComponent(Toolbar);
       await fixture.whenStable();
       const root = fixture.nativeElement as HTMLElement;
-      const renameBtn = () => root.querySelector('button[aria-label="Rename board"]') as HTMLButtonElement;
-      return { session, fixture, root, renameBtn };
+      return { fixture, root };
     };
 
-    it('renames the current board in place without creating or switching boards', async () => {
-      const { session, fixture, root, renameBtn } = await setup();
-      const id = store.doc().id;
-      renameBtn().click();
-      await fixture.whenStable();
-      const input = root.querySelector('#bm-board-rename') as HTMLInputElement;
-      expect(input.value).toBe('Untitled board');
-      input.value = 'Plans';
-      input.form!.dispatchEvent(new Event('submit', { cancelable: true }));
-      await settle();
-      await fixture.whenStable();
-      expect(store.doc().id).toBe(id);
-      expect(store.doc().name).toBe('Plans');
-      expect(session.boards()).toHaveLength(1);
-      expect(session.boards()[0]).toMatchObject({ id, name: 'Plans' });
-      expect(root.querySelector('.bm-board-name')?.textContent).toBe('Plans');
-      expect(store.boardRenaming()).toBe(false);
-    });
-
-    it('cancels with Escape and ignores an unchanged name', async () => {
-      const { session, fixture, root, renameBtn } = await setup();
-      renameBtn().click();
-      await fixture.whenStable();
-      const input = root.querySelector('#bm-board-rename') as HTMLInputElement;
-      input.value = 'Discarded';
-      input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
-      await fixture.whenStable();
-      expect(store.boardRenaming()).toBe(false);
-      expect(store.doc().name).toBe('Untitled board');
-      expect(session.boards()).toHaveLength(1);
-    });
-
-    it('keeps Save/Load out of the toolbar and board actions apart from file actions', async () => {
+    it('keeps save, import, boards, settings, and inline rename out of the toolbar', async () => {
       const { root } = await setup();
-      const labels = (group: string) =>
-        [...root.querySelectorAll(`[role="group"][aria-label="${group}"] button`)].map((b) => b.getAttribute('aria-label'));
-      expect(labels('File')).toEqual(['Export']);
-      expect(root.querySelector('button[aria-label="Save to file"], button[aria-label="Load from file"]')).toBeNull();
-      expect(labels('Board')).toEqual([expect.stringContaining('Current board'), 'Rename board']);
+      expect(root.querySelector(
+        'button[aria-label="Save"], button[aria-label="Load"], button[aria-label="Rename board"], button[aria-label="Export"], button[aria-label^="Open boards"], button[aria-label="Settings"]',
+      )).toBeNull();
+      expect(root.querySelector('#bm-board-rename')).toBeNull();
     });
   });
 
@@ -416,10 +420,33 @@ describe('UI components', () => {
       expect(btn('Snap to grid').getAttribute('aria-pressed')).toBe(String(!snapBefore));
       expect(btn('Undo').disabled).toBe(false);
     });
+
+    it('shows a fixed-space progress indicator for local saves and cloud sync', async () => {
+      const session = TestBed.inject(BoardSession);
+      const workspace = TestBed.inject(WorkspaceSession);
+      const fixture = TestBed.createComponent(AccountActions);
+      await fixture.whenStable();
+      const root = fixture.nativeElement as HTMLElement;
+
+      expect(root.querySelector('.bm-account-save-progress')).toBeNull();
+      expect(root.querySelector('.bm-save-spinner')).toBeNull();
+
+      session.status.set('saving');
+      fixture.detectChanges();
+      expect(root.querySelector('.bm-account-save-progress .bm-save-spinner')).not.toBeNull();
+      expect(root.querySelector('[role="status"]')?.textContent).toBe('Saving…');
+
+      session.status.set('saved');
+      workspace.account.set({ id: 'account', username: 'test', display_name: 'Test', role: 'basic' });
+      workspace.syncState.set('syncing');
+      fixture.detectChanges();
+      expect(root.querySelector('.bm-account-save-progress .bm-save-spinner')).not.toBeNull();
+      expect(root.querySelector('[role="status"]')?.textContent).toBe('Syncing to cloud');
+    });
   });
 
   describe('ContextToolbar', () => {
-    it('applies shape and todo to every selected node and hides while editing', async () => {
+    it('applies shape and todo to every selected node and stays available while editing', async () => {
       const a = store.createRootAt({ x: 0, y: 0 }, { edit: false });
       const b = store.createRootAt({ x: 0, y: 200 }, { edit: false });
       store.select([a, b]);
@@ -433,7 +460,12 @@ describe('UI components', () => {
       expect(store.doc().nodes[b].todo).toBe(true);
       store.beginEdit(a);
       await fixture.whenStable();
-      expect(root.hidden).toBe(true);
+      fixture.detectChanges();
+      expect(root.hidden).toBe(false);
+      expect(root.querySelector('[aria-label="Color"]')).not.toBeNull();
+      expect(root.querySelector('[aria-label="Emoji"]')).not.toBeNull();
+      expect(root.querySelector('[aria-label="Tags"]')).not.toBeNull();
+      expect(root.querySelector('[aria-label="Delete"]')).not.toBeNull();
     });
   });
 });

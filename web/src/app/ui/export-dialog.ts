@@ -3,6 +3,7 @@ import { DIALOG_DATA, DialogRef } from '@angular/cdk/dialog';
 import { APP_INFO } from '../app-info';
 import { EditorStore } from '../editor/editor-store';
 import { MessageKey, t } from '../i18n';
+import { WorkspaceSession } from '../persistence/workspace-session';
 import { EditorActions } from './editor-actions';
 import { Icon } from './icon';
 
@@ -39,6 +40,9 @@ export type ExportTab = 'file' | 'mermaid' | 'image' | 'checklist';
       @switch (current()) {
         @case ('file') {
           <p>{{ t('export.fileIntro', { app: appName }) }}</p>
+          @if (!workspace.account()) {
+            <p class="bm-muted bm-cloud-notice">{{ t('auth.notice') }}</p>
+          }
           <label class="bm-check-label">
             <input type="checkbox" [checked]="withAttachments()" (change)="withAttachments.set($any($event.target).checked)" [disabled]="!actions.hasAttachments()" />
             {{ t('export.embed') }}
@@ -107,6 +111,7 @@ export class ExportDialog {
   protected readonly appName = APP_INFO.name;
   protected readonly ref = inject(DialogRef);
   protected readonly actions = inject(EditorActions);
+  protected readonly workspace = inject(WorkspaceSession);
   private readonly store = inject(EditorStore);
   private readonly data = inject<{ tab?: ExportTab } | null>(DIALOG_DATA, { optional: true });
 

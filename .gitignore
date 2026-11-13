@@ -1,2 +1,10 @@
 .DS_Store
 Thumbs.db
+**/node_modules/
+**/dist/
+**/coverage/
+.env
+.env.*
+!.env.example
+containers/secrets/
+containers/backups/

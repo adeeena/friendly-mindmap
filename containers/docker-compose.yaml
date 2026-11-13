@@ -1,8 +1,191 @@
+# Complete stack: nginx (frontend + same-origin API proxy) -> API -> PostgreSQL + private RustFS.
+# Only the nginx service publishes a host port. Required secrets come from containers/.env
+# (copy .env.example) or the shell environment; nothing secret is tracked in source.
+# The API image is built once by the `api` service; the one-shot and tool services reuse it.
+
+x-api-image: &api-image
+  image: friendly-mindmap-api:local
+  pull_policy: never
+
+x-database-url: &database-url
+  DATABASE_URL: postgres://mindmap:${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in containers/.env (copy .env.example)}@postgres:5432/mindmap
+
+x-storage-env: &storage-env
+  S3_ENDPOINT: http://rustfs:9000
+  S3_REGION: us-east-1
+  S3_BUCKET: ${S3_BUCKET:-friendly-mindmap}
+  S3_ACCESS_KEY: ${S3_ACCESS_KEY:?Set S3_ACCESS_KEY in containers/.env (copy .env.example)}
+  S3_SECRET_KEY: ${S3_SECRET_KEY:?Set S3_SECRET_KEY in containers/.env (copy .env.example)}
+
+x-hardened: &hardened
+  read_only: true
+  tmpfs:
+    - /tmp
+  cap_drop:
+    - ALL
+  security_opt:
+    - no-new-privileges:true
+
 services:
   mindmap:
     build:
       context: ..
       dockerfile: containers/Dockerfile
     ports:
-      - "6610:80"
+      - "${APP_PORT:-6610}:80"
+    networks:
+      - edge
+      - proxy
+    depends_on:
+      api:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:80/"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 5s
     restart: unless-stopped
+
+  api:
+    <<: *hardened
+    image: friendly-mindmap-api:local
+    build:
+      context: ..
+      dockerfile: containers/api.Dockerfile
+    environment:
+      <<: [*database-url, *storage-env]
+      NODE_ENV: ${API_NODE_ENV:-development}
+      APP_ORIGIN: ${APP_ORIGIN:-http://127.0.0.1:${APP_PORT:-6610}}
+      HOST: 0.0.0.0
+      PORT: "3000"
+      # Only the nginx container can reach the API; it sets X-Forwarded-For to the real peer.
+      TRUST_PROXY: "true"
+    networks:
+      - proxy
+      - backend
+    depends_on:
+      postgres:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+      storage-init:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3000/api/health/ready').then(r=>process.exit(r.ok?0:1),()=>process.exit(1))"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    restart: unless-stopped
+
+  # One-shot, repeatable schema migration; the API starts only after it succeeds.
+  migrate:
+    <<: [*api-image, *hardened]
+    command: ["node", "dist/api/src/migrate.js"]
+    environment:
+      <<: *database-url
+    networks:
+      - backend
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: "no"
+
+  # One-shot, idempotent creation of the private attachment bucket.
+  storage-init:
+    <<: [*api-image, *hardened]
+    command: ["node", "provision-bucket.mjs"]
+    environment:
+      <<: *storage-env
+    networks:
+      - backend
+    depends_on:
+      rustfs:
+        condition: service_healthy
+    restart: "no"
+
+  postgres:
+    image: postgres:17-alpine@sha256:742f40ea20b9ff2ff31db5458d127452988a2164df9e17441e191f3b72252193
+    environment:
+      POSTGRES_USER: mindmap
+      POSTGRES_DB: mindmap
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in containers/.env (copy .env.example)}
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    networks:
+      - backend
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U mindmap -d mindmap"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+      start_period: 10s
+    restart: unless-stopped
+
+  rustfs:
+    image: rustfs/rustfs@sha256:ed9210d6411d77ffceb70d94b964a3cb7d225983368bc25bebe01e995293dcc2
+    command: ["/data"]
+    environment:
+      RUSTFS_ACCESS_KEY: ${S3_ACCESS_KEY:?Set S3_ACCESS_KEY in containers/.env (copy .env.example)}
+      RUSTFS_SECRET_KEY: ${S3_SECRET_KEY:?Set S3_SECRET_KEY in containers/.env (copy .env.example)}
+      RUSTFS_CONSOLE_ENABLE: "false"
+      RUSTFS_OBS_LOGGER_LEVEL: error
+    volumes:
+      - rustfs-data:/data
+    networks:
+      - backend
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:9000/health"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+      start_period: 10s
+    restart: unless-stopped
+
+  # Explicit, opt-in operator commands (never started by `up`):
+  #   docker compose run --rm -v <secret-file>:/run/secrets/account_password:ro bootstrap-admin
+  #   docker compose run --rm -v <secret-file>:/run/secrets/account_password:ro rotate-password
+  bootstrap-admin:
+    <<: [*api-image, *hardened]
+    profiles: ["tools"]
+    command: ["node", "dist/api/src/accounts-cli.js", "bootstrap"]
+    environment:
+      <<: *database-url
+      NODE_ENV: development
+      ACCOUNT_USERNAME: ${ACCOUNT_USERNAME:-adena}
+      ACCOUNT_PASSWORD_FILE: /run/secrets/account_password
+    networks:
+      - backend
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    restart: "no"
+
+  rotate-password:
+    <<: [*api-image, *hardened]
+    profiles: ["tools"]
+    command: ["node", "dist/api/src/accounts-cli.js", "password"]
+    environment:
+      <<: *database-url
+      ACCOUNT_USERNAME: ${ACCOUNT_USERNAME:-}
+      ACCOUNT_PASSWORD_FILE: /run/secrets/account_password
+    networks:
+      - backend
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: "no"
+
+networks:
+  # Only nginx joins this network; it carries the single published port.
+  edge: {}
+  # Private networks: no egress and no host exposure.
+  proxy:
+    internal: true
+  backend:
+    internal: true
+
+volumes:
+  postgres-data: {}
+  rustfs-data: {}
