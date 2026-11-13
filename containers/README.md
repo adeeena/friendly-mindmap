@@ -3,17 +3,18 @@
 One `docker compose` project runs the whole application:
 
 ```text
-browser ──> nginx (mindmap)  ──/api/──>  API  ──> PostgreSQL   (named volume postgres-data)
-            Angular shell                  └────> RustFS (S3)   (named volume rustfs-data)
+browser ──> Caddy (public TLS) ──> nginx (mindmap) ──/api/──> API ──> PostgreSQL
+              └─ port 6610 redirects to HTTPS                 └──> RustFS (S3)
 ```
 
-* **Only nginx publishes a host port** (`APP_PORT`, default `6610`, mapped to container port 80).
-  The API, PostgreSQL and RustFS live on internal Docker networks with no host ports and no
-  outbound access.
+* In the `public` profile, Caddy publishes TCP 443 and `APP_PORT` (6610 by default, HTTP redirect).
+  nginx is bound to loopback on host port 6611; the API, PostgreSQL and RustFS have no public
+  host ports.
 * The API is reached same-origin at `/api/` through nginx.
 * Startup order is enforced by health checks: PostgreSQL and RustFS healthy → one-shot
   `migrate` (schema migrations) and `storage-init` (idempotent bucket creation) succeed →
-  `api` healthy (`/api/health/ready`) → `mindmap` (nginx).
+  `api` healthy (`/api/health/ready`) → `mindmap` (nginx) → Caddy.
+* Caddy manages HTTPS certificates for `APP_DOMAIN`; certificate state is kept in named volumes.
 
 ## Required inputs
 
@@ -30,9 +31,11 @@ Copy-Item containers\.env.example containers\.env
 |---|---|---|
 | `POSTGRES_PASSWORD` | yes | PostgreSQL password (URL-safe characters only; it is embedded in the API's connection URL) |
 | `S3_ACCESS_KEY` / `S3_SECRET_KEY` | yes | RustFS root credentials, also used by the API (3+ / 8+ characters) |
-| `APP_PORT` | no, `6610` | Published host port of the application |
+| `APP_PORT` | no, `6610` | Local app port in development; HTTP-to-HTTPS redirect port in the `public` profile |
 | `APP_ORIGIN` | no, `http://127.0.0.1:<APP_PORT>` | Exact browser origin the API accepts (scheme, host and port; no path) |
 | `API_NODE_ENV` | no, `development` | `production` requires an HTTPS `APP_ORIGIN`; `development` additionally allows plain HTTP on loopback |
+| `APP_DOMAIN` | public profile | DNS hostname for Caddy automatic HTTPS |
+| `MINDMAP_BIND` / `MINDMAP_HOST_PORT` | public profile | nginx host bind address and port; production uses `127.0.0.1:6611` |
 | `S3_BUCKET` | no, `friendly-mindmap` | Private attachment bucket |
 
 If a required secret is missing, Compose stops before creating anything and names the
@@ -58,15 +61,26 @@ are repeatable. To run them alone: `docker compose -f containers/docker-compose.
 
 ### Production and TLS
 
-The API sets `__Host-` Secure cookies for an HTTPS origin and refuses a non-loopback HTTP
-origin. Put a TLS-terminating reverse proxy (or load balancer) in front of nginx, forward it to
-the published port, preserve the `Host` header and `X-Forwarded-Proto: https`, and set
-`APP_ORIGIN=https://your.host` and `API_NODE_ENV=production`. To avoid also exposing the plain HTTP
-port, publish it on loopback only by editing the `ports` entry to `127.0.0.1:${APP_PORT:-6610}:80`.
-Do not forward arbitrary client `Origin` headers; the API requires the exact configured origin.
-The bundled compose file sets `TRUST_PROXY=true` for the API (only nginx can reach it, and nginx
-overwrites `X-Forwarded-For` with the real peer), so the per-IP login limiter counts the real
-client. If you put another proxy in front, make it set/append `X-Forwarded-For` itself.
+The `public` profile runs Caddy on TCP 443 and `APP_PORT` (6610 by default). Caddy obtains and
+renews a certificate for `APP_DOMAIN`, reverse-proxies HTTPS to nginx over the Docker network, and
+redirects HTTP requests on port 6610 to `https://APP_DOMAIN/`. Point the hostname's DNS record at
+the public IP and forward WAN TCP 443 and 6610 to this host. Set `APP_ORIGIN=https://APP_DOMAIN`
+and `API_NODE_ENV=production`; the API then uses Secure cookies and rejects non-loopback HTTP.
+
+The public profile binds nginx's host port to loopback, so requests cannot bypass Caddy. Caddy's
+admin API is disabled. The `Server` response header uses a per-install opaque value and the
+upstream nginx header is removed; this is cosmetic and does not hide TLS/network fingerprints.
+nginx preserves Caddy's forwarded client IP and HTTPS scheme for the API. Do not forward arbitrary
+client `Origin` headers; the API requires the exact configured origin.
+
+A local development `docker compose up` without the `public` profile continues to serve the app
+directly on `APP_PORT`.
+
+The RouterOS rules in [mikrotik-expose-mindmap.rsc](./mikrotik-expose-mindmap.rsc) replace the
+previous Friendly Mindmap HTTPS rules and add the HTTP redirect port. Upload the file to the router
+and run `/import file-name=mikrotik-expose-mindmap.rsc`. It assumes the WAN interface list is named
+`WAN`. To remove only these Friendly Mindmap rules, import
+[mikrotik-remove-mindmap.rsc](./mikrotik-remove-mindmap.rsc).
 
 ### Deploying or updating on Debian
 
@@ -77,11 +91,13 @@ bash ~/projects/friendly-mindmap/deploy.sh
 ```
 
 The target is `~/projects/friendly-mindmap`. If it is absent or empty, the script clones `main`.
-If `containers/.env` is missing, it copies `.env.example` there and exits; configure the production
-secrets, `APP_ORIGIN`, and `API_NODE_ENV` before running it again. Each deployment requires a clean
-`main` checkout, fast-forwards it from `origin/main`, rebuilds the application images, and starts
-the stack. The script does not create backups; take a verified backup before deploying updates.
-Compose runs migrations and storage initialization as part of startup.
+If `containers/.env` is missing, it copies `.env.example` there and exits; configure the database
+and storage secrets before running it again. It adds the `mindmap.adena.dev` HTTPS settings when
+they are absent and creates a per-install opaque response-header value. Each deployment requires a
+clean `main` checkout, fast-forwards it from `origin/main`, pulls Caddy, rebuilds the application
+images, and starts the `public` profile. Existing conflicting HTTPS settings must be corrected in
+`.env` before the script proceeds. It does not create backups; take a verified backup before
+deploying updates. Compose runs migrations and storage initialization as part of startup.
 
 ## Development admin bootstrap (explicit, opt-in)
 

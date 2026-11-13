@@ -1,0 +1,23 @@
+{
+	admin off
+}
+
+{$APP_DOMAIN} {
+	header {
+		-Server
+		Server "{$CADDY_SERVER_HEADER}"
+	}
+
+	reverse_proxy mindmap:80 {
+		header_down -Server
+	}
+}
+
+:6610 {
+	header {
+		-Server
+		Server "{$CADDY_SERVER_HEADER}"
+	}
+
+	redir https://{$APP_DOMAIN}{uri} 308
+}

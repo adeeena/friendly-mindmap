@@ -1,6 +1,5 @@
-# Complete stack: nginx (frontend + same-origin API proxy) -> API -> PostgreSQL + private RustFS.
-# Only the nginx service publishes a host port. Required secrets come from containers/.env
-# (copy .env.example) or the shell environment; nothing secret is tracked in source.
+# Complete stack: Caddy (public TLS) -> nginx (frontend + API proxy) -> API -> PostgreSQL + RustFS.
+# The public profile publishes only Caddy. Required secrets come from containers/.env or the shell.
 # The API image is built once by the `api` service; the one-shot and tool services reuse it.
 
 x-api-image: &api-image
@@ -32,7 +31,7 @@ services:
       context: ..
       dockerfile: containers/Dockerfile
     ports:
-      - "${APP_PORT:-6610}:80"
+      - "${MINDMAP_BIND:-0.0.0.0}:${MINDMAP_HOST_PORT:-${APP_PORT:-6610}}:80"
     networks:
       - edge
       - proxy
@@ -47,6 +46,26 @@ services:
       start_period: 5s
     restart: unless-stopped
 
+  caddy:
+    image: caddy:2-alpine
+    profiles: ["public"]
+    environment:
+      APP_DOMAIN: ${APP_DOMAIN:-mindmap.adena.dev}
+      CADDY_SERVER_HEADER: ${CADDY_SERVER_HEADER:-edge-unconfigured}
+    ports:
+      - "443:443"
+      - "${APP_PORT:-6610}:6610"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+    networks:
+      - edge
+    depends_on:
+      mindmap:
+        condition: service_healthy
+    restart: unless-stopped
+
   api:
     <<: *hardened
     image: friendly-mindmap-api:local
@@ -59,7 +78,7 @@ services:
       APP_ORIGIN: ${APP_ORIGIN:-http://127.0.0.1:${APP_PORT:-6610}}
       HOST: 0.0.0.0
       PORT: "3000"
-      # Only the nginx container can reach the API; it sets X-Forwarded-For to the real peer.
+      # nginx is the web ingress and forwards Caddy's client address to the API.
       TRUST_PROXY: "true"
     networks:
       - proxy
@@ -178,7 +197,7 @@ services:
     restart: "no"
 
 networks:
-  # Only nginx joins this network; it carries the single published port.
+  # Caddy and nginx share this network; only Caddy publishes ports in the public profile.
   edge: {}
   # Private networks: no egress and no host exposure.
   proxy:
@@ -189,3 +208,5 @@ networks:
 volumes:
   postgres-data: {}
   rustfs-data: {}
+  caddy-data: {}
+  caddy-config: {}
