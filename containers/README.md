@@ -68,6 +68,19 @@ The bundled compose file sets `TRUST_PROXY=true` for the API (only nginx can rea
 overwrites `X-Forwarded-For` with the real peer), so the per-IP login limiter counts the real
 client. If you put another proxy in front, make it set/append `X-Forwarded-For` itself.
 
+### Updating a Debian deployment
+
+On a host with the repository checked out at `~/projects/friendly-mindmap` and a configured
+`containers/.env`, run:
+
+```bash
+bash ~/projects/friendly-mindmap/deploy.sh
+```
+
+The script requires a clean `main` checkout, fast-forwards it from `origin/main`, rebuilds the
+application images and starts the stack. It does not create backups; take a verified backup
+before deploying updates. Compose runs migrations and storage initialization as part of startup.
+
 ## Development admin bootstrap (explicit, opt-in)
 
 Normal startup never creates an account. The `tools` profile provides a separate development-only
