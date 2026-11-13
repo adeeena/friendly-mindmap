@@ -68,18 +68,20 @@ The bundled compose file sets `TRUST_PROXY=true` for the API (only nginx can rea
 overwrites `X-Forwarded-For` with the real peer), so the per-IP login limiter counts the real
 client. If you put another proxy in front, make it set/append `X-Forwarded-For` itself.
 
-### Updating a Debian deployment
+### Deploying or updating on Debian
 
-On a host with the repository checked out at `~/projects/friendly-mindmap` and a configured
-`containers/.env`, run:
+Run the checked-in script (or a copy of it) from Bash:
 
 ```bash
 bash ~/projects/friendly-mindmap/deploy.sh
 ```
 
-The script requires a clean `main` checkout, fast-forwards it from `origin/main`, rebuilds the
-application images and starts the stack. It does not create backups; take a verified backup
-before deploying updates. Compose runs migrations and storage initialization as part of startup.
+The target is `~/projects/friendly-mindmap`. If it is absent or empty, the script clones `main`.
+If `containers/.env` is missing, it copies `.env.example` there and exits; configure the production
+secrets, `APP_ORIGIN`, and `API_NODE_ENV` before running it again. Each deployment requires a clean
+`main` checkout, fast-forwards it from `origin/main`, rebuilds the application images, and starts
+the stack. The script does not create backups; take a verified backup before deploying updates.
+Compose runs migrations and storage initialization as part of startup.
 
 ## Development admin bootstrap (explicit, opt-in)
 
